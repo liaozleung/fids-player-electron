@@ -3,72 +3,35 @@ name: Build & Release Electron App
 on:
   push:
     tags:
-      - 'v*'   # 只有 tag 才触发发布
+      - 'v*'
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
-
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest]
+  release:
+    runs-on: windows-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
-        run: npm install
+      - run: npm install
+      - run: npm run build
 
-      - name: Build app (vite + electron)
-        run: npm run build
-
-      - name: Build Windows installer
-        if: runner.os == 'Windows'
+      - name: Build Windows
         run: npm run build:win
 
-      - name: Build Linux AppImage
-        if: runner.os == 'Linux'
+      - name: Build Linux (via WSL-like runner fallback)
         run: npm run build:linux
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-${{ runner.os }}
-          path: |
-            dist/**
-            dist-electron/**
-            release/**
-            out/**
-
-  release:
-    name: Create GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-
-      - name: Display structure (debug)
-        run: ls -R
-
-      - name: Create Release and Upload Assets
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: ${{ github.ref_name }}
-          tag_name: ${{ github.ref_name }}
-          draft: false
-          prerelease: false
           files: |
+            dist/**
             **/*.exe
             **/*.AppImage
             **/*.deb
-            **/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
