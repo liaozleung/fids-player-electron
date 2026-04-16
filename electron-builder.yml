@@ -1,0 +1,30 @@
+appId: com.hzwl.fids-player-electron
+productName: FIDS Player
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**/*
+asar: true
+linux:
+  target:
+    - target: deb
+      arch:
+        - x64
+    - target: AppImage
+      arch:
+        - x64
+    - target: tar.gz
+      arch:
+        - x64
+  category: Utility
+  maintainer: hzwl
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: true

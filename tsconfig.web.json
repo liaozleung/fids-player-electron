@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": "./out",
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src/renderer/src/**/*",
+    "src/renderer/env.d.ts"
+  ]
+}
