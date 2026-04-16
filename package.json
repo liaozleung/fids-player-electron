@@ -9,7 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
 
-    "build:win": "npm run build && electron-builder --win --x64",
+    "build:win": "npm run build && electron-builder --win --x64 --publish never"
     "build:linux": "npm run build && electron-builder --linux AppImage --x64",
     "build:linux:deb": "npm run build && electron-builder --linux deb --x64",
     "build:mac": "npm run build && electron-builder --mac"
