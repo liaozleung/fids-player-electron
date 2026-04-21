@@ -13,7 +13,7 @@
     "postinstall": "electron-builder install-app-deps",
 
     "build:win": "npm run build && electron-builder --win --x64 --publish never",
-    "build:linux": "npm run build && electron-builder --linux AppImage --x64 --publish never",
+    "build:linux": "npm run build && electron-builder --linux tar.gz --x64 --publish never",
     "build:linux:deb": "npm run build && electron-builder --linux deb --x64 --publish never",
     "build:linux:appimage": "npm run build && electron-builder --linux AppImage --x64 --publish never",
     "build:linux:all": "npm run build && electron-builder --linux --x64 --publish never",
@@ -27,6 +27,11 @@
     "productName": "FIDS Player",
     "directories": {
       "output": "dist"
+    },
+    "linux": {
+      "target": [
+        "tar.gz"
+      ]
     }
   },
 
