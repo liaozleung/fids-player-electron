@@ -4,6 +4,7 @@ import { loadConfig } from './config'
 import { initIpcHandlers } from './ipc-handlers'
 import { initMqtt, disconnect as disconnectMqtt } from './mqtt-client'
 import { startHeartbeat, stopHeartbeat } from './heartbeat'
+import { disableScreenSaver } from './system-control'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -46,6 +47,9 @@ app.whenReady().then(() => {
 
   // 创建主窗口
   mainWindow = createWindow()
+
+  // 禁用屏幕保护和 DPMS 空闲超时（防止系统自动关屏）
+  disableScreenSaver()
 
   // 启动 MQTT 和心跳
   initMqtt(config, getMainWindow)

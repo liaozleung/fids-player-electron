@@ -52,13 +52,23 @@ export async function setBrightness(value: number): Promise<void> {
 /** 关闭显示器 */
 export function monitorOff(): void {
   console.log('关闭显示器')
-  exec('xset dpms force off')
+  // 先启用 DPMS（force off 需要 DPMS 处于启用状态才能生效）
+  exec('xset +dpms && xset dpms force off')
 }
 
 /** 打开显示器 */
 export function monitorOn(): void {
   console.log('打开显示器')
-  exec('xset dpms force on')
+  // 1. 强制打开显示器
+  // 2. 禁用屏幕保护
+  // 3. 禁用 DPMS 空闲超时（防止系统过一会又自动关屏）
+  exec('xset dpms force on && xset s off && xset s noblank && xset -dpms')
+}
+
+/** 禁用屏幕保护和 DPMS 空闲超时（播放器启动时调用） */
+export function disableScreenSaver(): void {
+  console.log('禁用屏幕保护和 DPMS 空闲超时')
+  exec('xset s off && xset s noblank && xset -dpms')
 }
 
 /** 截取屏幕截图，返回截图文件路径。优先用 Electron desktopCapturer，失败时回退 scrot */
