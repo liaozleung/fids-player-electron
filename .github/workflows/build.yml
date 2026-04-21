@@ -36,35 +36,8 @@ jobs:
           name: windows-build
           path: dist/**
 
-  build-linux:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install deps
-        run: npm install
-
-      - name: Build app
-        run: npm run build
-
-      - name: Build Linux package
-        run: npm run build:linux
-
-      - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-build
-          path: dist/**
-
   release:
-    needs: [build-windows, build-linux]
+    needs: [build-windows]
     runs-on: ubuntu-latest
 
     steps:
@@ -73,12 +46,6 @@ jobs:
         with:
           name: windows-build
           path: release/windows
-
-      - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-build
-          path: release/linux
 
       - name: Show files (debug)
         run: ls -R release
@@ -90,6 +57,5 @@ jobs:
           name: ${{ github.ref_name }}
           files: |
             release/windows/**
-            release/linux/**
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
