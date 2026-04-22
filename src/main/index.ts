@@ -1,5 +1,10 @@
 import { app, BrowserWindow, globalShortcut } from 'electron'
 import { join } from 'path'
+import { installFileLogger } from './logger'
+
+// 必须最早安装文件日志：Windows GUI 应用无控制台，只能靠文件看主进程输出
+installFileLogger()
+
 import { loadConfig } from './config'
 import { initIpcHandlers } from './ipc-handlers'
 import { initMqtt, disconnect as disconnectMqtt } from './mqtt-client'
