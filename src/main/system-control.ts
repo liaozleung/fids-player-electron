@@ -86,8 +86,12 @@ export async function setBrightness(value: number): Promise<void> {
 }
 
 /**
- * Windows 关屏/开屏 PowerShell 脚本：通过 Win32 SendMessageTimeout 广播 WM_SYSCOMMAND+SC_MONITORPOWER
- * 用 SendMessageTimeout + SMTO_ABORTIFHUNG(0x2) 避免桌面某个卡死窗口拖死整个调用
+ * Windows 关屏/开屏助手
+ * - Off: 广播 WM_SYSCOMMAND + SC_MONITORPOWER(2)
+ * - On:  先打 SetThreadExecutionState(ES_DISPLAY_REQUIRED|ES_CONTINUOUS) 告诉系统不要休眠显示器
+ *        再 SendMessage(-1) 发"请求唤醒"信号
+ *        最后模拟鼠标微移动（等同真实用户输入）——这是重置 idle 计时器的关键，没有它屏亮 1~2 秒就会被系统再次关掉
+ * SendMessageTimeout + SMTO_ABORTIFHUNG(0x2) 避免桌面某个卡死窗口拖死整个调用
  */
 const WIN_MONITOR_HELPER = `
 Add-Type -TypeDefinition @"
@@ -96,8 +100,33 @@ using System.Runtime.InteropServices;
 public class MonitorHelper {
   [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
   public static extern IntPtr SendMessageTimeout(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam, int fuFlags, int uTimeout, out IntPtr lpdwResult);
-  public static void Off() { IntPtr r; SendMessageTimeout((IntPtr)0xFFFF, 0x0112, (IntPtr)0xF170, (IntPtr)2, 0x0002, 2000, out r); }
-  public static void On()  { IntPtr r; SendMessageTimeout((IntPtr)0xFFFF, 0x0112, (IntPtr)0xF170, (IntPtr)(-1), 0x0002, 2000, out r); }
+  [DllImport("kernel32.dll")]
+  public static extern uint SetThreadExecutionState(uint esFlags);
+  [DllImport("user32.dll")]
+  public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, UIntPtr dwExtraInfo);
+
+  const uint ES_CONTINUOUS        = 0x80000000;
+  const uint ES_DISPLAY_REQUIRED  = 0x00000002;
+  const uint ES_SYSTEM_REQUIRED   = 0x00000001;
+  const uint MOUSEEVENTF_MOVE     = 0x0001;
+
+  public static void Off() {
+    IntPtr r;
+    SendMessageTimeout((IntPtr)0xFFFF, 0x0112, (IntPtr)0xF170, (IntPtr)2, 0x0002, 2000, out r);
+  }
+
+  public static void On() {
+    // 1) 持续要求显示器 + 系统保持唤醒（标志会在本 PS 进程退出后失效，
+    //    所以仍需配合 powercfg 把超时设为 0 才能长期生效）
+    SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
+    // 2) 广播 SC_MONITORPOWER=-1 请求唤醒
+    IntPtr r;
+    SendMessageTimeout((IntPtr)0xFFFF, 0x0112, (IntPtr)0xF170, (IntPtr)(-1), 0x0002, 2000, out r);
+    // 3) 模拟鼠标 1px 移动后回弹：等同真实用户输入，重置 idle 计时器，物理唤醒显示器
+    mouse_event(MOUSEEVENTF_MOVE, 1, 0, 0, UIntPtr.Zero);
+    System.Threading.Thread.Sleep(50);
+    mouse_event(MOUSEEVENTF_MOVE, -1, 0, 0, UIntPtr.Zero);
+  }
 }
 "@
 `.trim()
@@ -121,10 +150,13 @@ export async function monitorOn(): Promise<void> {
   console.log('打开显示器')
   if (isWindows) {
     try {
+      // 先禁用自动关屏/休眠，防止唤醒后又被 idle 计时器打掉
+      // 这里必须 AC/DC 双设：否则笔记本类设备拔电源后又会休眠
+      await execAsync('powercfg /change monitor-timeout-ac 0').catch((e) => console.warn('powercfg monitor-timeout-ac 失败:', e.message))
+      await execAsync('powercfg /change monitor-timeout-dc 0').catch((e) => console.warn('powercfg monitor-timeout-dc 失败:', e.message))
+      await execAsync('powercfg /change standby-timeout-ac 0').catch((e) => console.warn('powercfg standby-timeout-ac 失败:', e.message))
+      await execAsync('powercfg /change standby-timeout-dc 0').catch((e) => console.warn('powercfg standby-timeout-dc 失败:', e.message))
       await execPowerShell(`${WIN_MONITOR_HELPER}; [MonitorHelper]::On()`)
-      // 同时禁用 Windows 自动关屏和休眠（AC 供电下永不关屏）
-      await execAsync('powercfg /change monitor-timeout-ac 0').catch((e) => console.warn('powercfg monitor-timeout 失败:', e.message))
-      await execAsync('powercfg /change standby-timeout-ac 0').catch((e) => console.warn('powercfg standby-timeout 失败:', e.message))
     } catch (e) {
       console.error('Windows 打开显示器失败:', e)
     }
@@ -138,8 +170,11 @@ export async function monitorOn(): Promise<void> {
 export function disableScreenSaver(): void {
   console.log('禁用屏幕保护和空闲超时')
   if (isWindows) {
-    execAsync('powercfg /change monitor-timeout-ac 0').catch((e) => console.warn('powercfg 失败:', e.message))
-    execAsync('powercfg /change standby-timeout-ac 0').catch((e) => console.warn('powercfg 失败:', e.message))
+    // AC/DC 双设，覆盖有电源和电池两种状态
+    execAsync('powercfg /change monitor-timeout-ac 0').catch((e) => console.warn('powercfg monitor-ac 失败:', e.message))
+    execAsync('powercfg /change monitor-timeout-dc 0').catch((e) => console.warn('powercfg monitor-dc 失败:', e.message))
+    execAsync('powercfg /change standby-timeout-ac 0').catch((e) => console.warn('powercfg standby-ac 失败:', e.message))
+    execAsync('powercfg /change standby-timeout-dc 0').catch((e) => console.warn('powercfg standby-dc 失败:', e.message))
   } else {
     execAsync('xset s off && xset s noblank && xset -dpms').catch((e) => console.error(e.message))
   }
