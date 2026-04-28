@@ -9,6 +9,7 @@ import { loadConfig } from './config'
 import { initIpcHandlers } from './ipc-handlers'
 import { initMqtt, disconnect as disconnectMqtt } from './mqtt-client'
 import { startHeartbeat, stopHeartbeat } from './heartbeat'
+import { startWatchdog, stopWatchdog } from './watchdog'
 import { disableScreenSaver } from './system-control'
 
 let mainWindow: BrowserWindow | null = null
@@ -60,6 +61,9 @@ app.whenReady().then(() => {
   initMqtt(config, getMainWindow)
   startHeartbeat(config, getMainWindow)
 
+  // 启动看门狗：定时读取页面右下角像素，检测前端是否停止刷新
+  startWatchdog(config, getMainWindow)
+
   // Ctrl+Shift+I 打开 DevTools 调试控制台
   globalShortcut.register('CommandOrControl+Shift+I', () => {
     mainWindow?.webContents.toggleDevTools()
@@ -75,6 +79,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   disconnectMqtt()
   stopHeartbeat()
+  stopWatchdog()
   if (process.platform !== 'darwin') {
     app.quit()
   }
@@ -84,4 +89,5 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   disconnectMqtt()
   stopHeartbeat()
+  stopWatchdog()
 })
