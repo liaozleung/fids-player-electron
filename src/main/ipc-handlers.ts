@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, BrowserWindow, app } from 'electron'
 import {
   type DeviceConfig,
   loadConfig,
@@ -113,6 +113,52 @@ export function initIpcHandlers(initialConfig: DeviceConfig): void {
   ipcMain.handle('system-command', async (_event, action: string) => {
     await executeSystemCommand(action)
   })
+
+  // 仅开发模式：冻结看门狗 canvas（写入过期时间戳并锁住 fillRect）
+  if (!app.isPackaged) {
+    ipcMain.handle('debug-freeze-watchdog', async () => {
+      const win = BrowserWindow.getAllWindows()[0]
+      if (!win) return 'no window'
+      const stale = (Date.now() - 120000) % 16777216
+      const r = (stale >> 16) & 0xFF
+      const g = (stale >> 8) & 0xFF
+      const b = stale & 0xFF
+      const script = `(function(){
+        var c=document.getElementById('__fids-watchdog__');
+        if(!c)return 'no canvas';
+        var ctx=c.getContext('2d');
+        Object.getPrototypeOf(ctx).fillRect.call(ctx,0,0,1,1);
+        ctx.fillStyle='rgb(${r},${g},${b})';
+        Object.getPrototypeOf(ctx).fillRect.call(ctx,0,0,1,1);
+        Object.getPrototypeOf(ctx).fillRect=function(){};
+        return 'frozen:${stale}';
+      })()`
+      const results: string[] = []
+      for (const frame of win.webContents.mainFrame.frames) {
+        try { results.push(await frame.executeJavaScript(script)) } catch (_) {}
+      }
+      console.log('[debug] freeze-watchdog results:', results)
+      return results
+    })
+
+    ipcMain.handle('debug-unfreeze-watchdog', async () => {
+      const win = BrowserWindow.getAllWindows()[0]
+      if (!win) return 'no window'
+      const script = `(function(){
+        var c=document.getElementById('__fids-watchdog__');
+        if(!c)return 'no canvas';
+        var proto=Object.getPrototypeOf(c.getContext('2d'));
+        var canvas2=document.createElement('canvas');
+        proto.fillRect=Object.getPrototypeOf(canvas2.getContext('2d')).fillRect;
+        return 'unfrozen';
+      })()`
+      for (const frame of win.webContents.mainFrame.frames) {
+        try { await frame.executeJavaScript(script) } catch (_) {}
+      }
+      console.log('[debug] unfreeze-watchdog done')
+      return 'ok'
+    })
+  }
 }
 
 /** 获取运行时配置 */

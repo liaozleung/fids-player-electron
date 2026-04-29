@@ -7,9 +7,9 @@ installFileLogger()
 
 import { loadConfig } from './config'
 import { initIpcHandlers } from './ipc-handlers'
-import { initMqtt, disconnect as disconnectMqtt } from './mqtt-client'
+import { initMqtt, disconnect as disconnectMqtt, getDisplayUrl } from './mqtt-client'
 import { startHeartbeat, stopHeartbeat } from './heartbeat'
-import { startWatchdog, stopWatchdog } from './watchdog'
+import { startWatchdog, stopWatchdog, resetWatchdog } from './watchdog'
 import { disableScreenSaver } from './system-control'
 
 let mainWindow: BrowserWindow | null = null
@@ -62,7 +62,12 @@ app.whenReady().then(() => {
   startHeartbeat(config, getMainWindow)
 
   // 启动看门狗：定时读取页面右下角像素，检测前端是否停止刷新
-  startWatchdog(config, getMainWindow)
+  startWatchdog(config, getMainWindow, getDisplayUrl)
+
+  // 切换显示页面时重置看门狗冻结计时，避免误报
+  mainWindow.webContents.on('ipc-message', (_event, channel) => {
+    if (channel === 'display-url-changed') resetWatchdog()
+  })
 
   // Ctrl+Shift+I 打开 DevTools 调试控制台
   globalShortcut.register('CommandOrControl+Shift+I', () => {

@@ -11,6 +11,8 @@ const electronAPI = {
   getLogs: (limit?: number) => ipcRenderer.invoke('get-logs', limit),
   syncFiles: (fileList: unknown[]) => ipcRenderer.invoke('sync-files', fileList),
   systemCommand: (action: string) => ipcRenderer.invoke('system-command', action),
+  debugFreezeWatchdog: () => ipcRenderer.invoke('debug-freeze-watchdog'),
+  debugUnfreezeWatchdog: () => ipcRenderer.invoke('debug-unfreeze-watchdog'),
 
   // ── listen 替代 ──
   onMqttStatusChanged: (callback: (data: unknown) => void) => {
