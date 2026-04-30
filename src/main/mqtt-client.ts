@@ -182,6 +182,23 @@ function handleCommand(cmd: MqttCommand): void {
           currentConfig.displayUrl = cmd.url
           saveConfigToDisk(currentConfig)
         }
+        // 延迟 3s 上报 page_loaded 回执，供驾驶舱"下发链路"统计已确认设备数
+        const loadedUrl = cmd.url
+        setTimeout(() => {
+          if (!currentConfig?.serverUrl || !currentConfig?.deviceId) return
+          fetch(`${currentConfig.serverUrl}/api/device-status-logs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              deviceId: currentConfig.deviceId,
+              status: 'online',
+              timestamp: new Date().toISOString(),
+              message: JSON.stringify({ event: 'page_loaded', url: loadedUrl }),
+              currentUrl: loadedUrl,
+            }),
+            signal: AbortSignal.timeout(10000),
+          }).catch((e) => console.warn('page_loaded 上报失败:', e?.message || e))
+        }, 3000)
       }
       break
     case 'refreshPage':

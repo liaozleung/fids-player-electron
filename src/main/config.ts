@@ -7,7 +7,10 @@ export interface DeviceConfig {
   deviceId: string
   deviceName: string
   macAddress: string
+  /** Next.js 后端：管理 API + displayUrl 引导 */
   serverUrl: string
+  /** Spring Boot 数据通道：心跳上报 + 数据接口（默认与 serverUrl 同主机不同端口） */
+  dataChannelUrl: string
   mqttBroker: string
   mqttPort: number
   mqttUsername: string
@@ -54,6 +57,7 @@ export function defaultConfig(): DeviceConfig {
     deviceName: '',
     macAddress: getMacAddress(),
     serverUrl: 'http://192.168.0.200:3000',
+    dataChannelUrl: 'http://192.168.0.100:9203',
     mqttBroker: '192.168.0.200',
     mqttPort: 1883,
     mqttUsername: '',
@@ -71,7 +75,9 @@ export function loadConfig(): DeviceConfig {
   if (existsSync(path)) {
     try {
       const content = readFileSync(path, 'utf-8')
-      return JSON.parse(content) as DeviceConfig
+      const parsed = JSON.parse(content) as Partial<DeviceConfig>
+      // 合并默认值，兼容旧版本配置（缺少 dataChannelUrl 等新字段）
+      return { ...defaultConfig(), ...parsed }
     } catch (e) {
       console.warn('配置文件解析失败，使用默认配置:', e)
     }
