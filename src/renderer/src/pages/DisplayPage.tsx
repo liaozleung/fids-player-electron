@@ -4,6 +4,7 @@ interface DisplayPageProps {
   url: string | null
   refreshTrigger: number
   onExitDisplay: () => void
+  marquee?: { text: string; mode: 'embedded' | 'overlay' }
 }
 
 /** 离线占位页 */
@@ -20,8 +21,25 @@ const OFFLINE_HTML = `
 </html>
 `
 
-export function DisplayPage({ url, refreshTrigger, onExitDisplay }: DisplayPageProps) {
+export function DisplayPage({ url, refreshTrigger, onExitDisplay, marquee }: DisplayPageProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const marqueeText = marquee?.text || ''
+  const marqueeMode = marquee?.mode || 'overlay'
+
+  // 嵌入模式：marquee 变化时 postMessage 给 iframe，由 fids_webpage 自行显示在页脚
+  useEffect(() => {
+    if (marqueeMode !== 'embedded') return
+    const iframe = iframeRef.current
+    if (!iframe || !iframe.contentWindow) return
+    const payload = { type: 'marqueeOverride', text: marqueeText }
+    // 立即发送 + iframe 加载完成后再发一次，避免 SPA 还没挂载消息监听
+    try { iframe.contentWindow.postMessage(payload, '*') } catch {}
+    const onLoad = () => {
+      try { iframe.contentWindow?.postMessage(payload, '*') } catch {}
+    }
+    iframe.addEventListener('load', onLoad)
+    return () => iframe.removeEventListener('load', onLoad)
+  }, [marqueeText, marqueeMode])
 
   // ESC / F12 退出全屏
   const handleKeyDown = useCallback(
@@ -64,6 +82,8 @@ export function DisplayPage({ url, refreshTrigger, onExitDisplay }: DisplayPageP
 
   const iframeSrc = url || `data:text/html;charset=utf-8,${encodeURIComponent(OFFLINE_HTML)}`
 
+  const showOverlayBar = marqueeMode === 'overlay' && !!marqueeText
+
   return (
     <div className="display-page">
       <iframe
@@ -72,7 +92,7 @@ export function DisplayPage({ url, refreshTrigger, onExitDisplay }: DisplayPageP
         title="FIDS Display"
         style={{
           width: '100vw',
-          height: '100vh',
+          height: showOverlayBar ? 'calc(100vh - 7vh)' : '100vh',
           border: 'none',
           position: 'fixed',
           top: 0,
@@ -80,6 +100,38 @@ export function DisplayPage({ url, refreshTrigger, onExitDisplay }: DisplayPageP
         }}
         allow="autoplay; fullscreen"
       />
+      {showOverlayBar && (
+        <div
+          style={{
+            position: 'fixed',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: '7vh',
+            background: '#0d1b2a',
+            color: '#ffd166',
+            display: 'flex',
+            alignItems: 'center',
+            overflow: 'hidden',
+            fontSize: '3vh',
+            fontWeight: 700,
+            boxShadow: '0 -2px 8px rgba(0,0,0,0.4)',
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              display: 'inline-block',
+              whiteSpace: 'nowrap',
+              paddingLeft: '100%',
+              animation: 'marquee-scroll 30s linear infinite',
+            }}
+          >
+            {marqueeText}
+          </div>
+          <style>{`@keyframes marquee-scroll { from { transform: translateX(0); } to { transform: translateX(-100%); } }`}</style>
+        </div>
+      )}
     </div>
   )
 }

@@ -11,6 +11,10 @@ export function useElectronEvents() {
   const [displayUrl, setDisplayUrl] = useState<string | null>(null)
   const [lastCommand, setLastCommand] = useState<MqttCommand | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const [marquee, setMarquee] = useState<{ text: string; mode: 'embedded' | 'overlay' }>({
+    text: '',
+    mode: 'overlay',
+  })
 
   const cleanups = useRef<Array<() => void>>([])
 
@@ -48,6 +52,12 @@ export function useElectronEvents() {
       })
     )
 
+    cleanups.current.push(
+      api.onMarqueeChanged((data) => {
+        setMarquee(data)
+      })
+    )
+
     return () => {
       cleanups.current.forEach((cleanup) => cleanup())
       cleanups.current = []
@@ -63,6 +73,7 @@ export function useElectronEvents() {
     displayUrl,
     lastCommand,
     refreshTrigger,
+    marquee,
     clearLastCommand,
   }
 }

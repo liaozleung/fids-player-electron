@@ -6,7 +6,7 @@ import type { AppPage, DeviceConfig } from './types'
 
 function App() {
   const [page, setPage] = useState<AppPage>('settings')
-  const { mqttStatus, displayUrl, lastCommand, refreshTrigger } = useElectronEvents()
+  const { mqttStatus, displayUrl, lastCommand, refreshTrigger, marquee } = useElectronEvents()
 
   // 检查是否有已保存的配置 — 如果有设备ID且启用了全屏，自动进入显示模式
   useEffect(() => {
@@ -36,6 +36,7 @@ function App() {
         url={displayUrl}
         refreshTrigger={refreshTrigger}
         onExitDisplay={handleExitDisplay}
+        marquee={marquee}
       />
     )
   }

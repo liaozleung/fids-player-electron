@@ -54,6 +54,9 @@ const MODULUS = 16_777_216       // 2^24，与前端编码一致
 
 let watchdogTimer: ReturnType<typeof setInterval> | null = null
 let frozenSince: number | null = null
+// 启动后是否已主动同步一次"未冻结"状态到服务端
+// 防止：上次进程异常退出留下 watchdog_alert=true，新进程启动后页面正常但 DB 标记不会自动清除
+let recoveryAcknowledged = false
 let currentConfig: DeviceConfig | null = null
 let getMainWindow: (() => BrowserWindow | null) | null = null
 let getDisplayUrl: (() => string | null) | null = null
@@ -85,6 +88,8 @@ export function updateWatchdogConfig(config: DeviceConfig): void {
 /** 显示 URL 切换时重置冻结计时，避免用旧状态误报 */
 export function resetWatchdog(): void {
   frozenSince = null
+  // URL 切换后需要等新页面跑起来再重新评估，恢复确认也归零
+  recoveryAcknowledged = false
   console.debug('[Watchdog] 状态已重置')
 }
 
@@ -125,11 +130,21 @@ async function checkWatchdog(): Promise<void> {
       // 首次触发时同步更新设备告警状态
       if (!wasAlreadyFrozen) {
         await notifyWatchdogAlert(true, `页面冻结 ${frozenSec}s，像素时差 ${Math.round(diff / 1000)}s`)
+        // 重置：下次恢复时仍需要发送 alert=false
+        recoveryAcknowledged = false
       }
     } else {
       if (frozenSince) {
+        // 本次进程内确实经历过冻结 → 通知恢复
         console.log('[Watchdog] 页面已从冻结状态恢复')
         frozenSince = null
+        recoveryAcknowledged = true
+        await notifyWatchdogAlert(false)
+      } else if (!recoveryAcknowledged) {
+        // 启动后首次"页面正常"，主动清一次 DB 中可能残留的告警标记
+        // 即使服务端本来就是 false，再写一次也是幂等的
+        recoveryAcknowledged = true
+        console.debug('[Watchdog] 启动后首次正常检测，主动同步未冻结状态')
         await notifyWatchdogAlert(false)
       }
     }

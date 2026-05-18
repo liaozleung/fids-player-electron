@@ -17,6 +17,13 @@ export interface MqttCommand {
   value?: number
   version?: string
   fileList?: Array<{ url: string; path: string; md5: string }>
+  // 自由文本等覆盖层：true 表示该 URL 仅作为临时覆盖层显示，
+  // 不替换设备的基础分配页；url 为空 + overlay=true 表示清除覆盖层、回到基础页
+  overlay?: boolean
+  // displayMarquee：屏底滚动字幕的文本（空串表示清除）
+  text?: string
+  // displayMarquee 模式：'embedded' 注入到 fids_webpage 页脚；'overlay' 播放器原生底部覆盖条
+  marqueeMode?: 'embedded' | 'overlay'
 }
 
 let client: MqttClient | null = null
@@ -26,11 +33,18 @@ let retryTimer: ReturnType<typeof setTimeout> | null = null
 let currentConfig: DeviceConfig | null = null
 let getMainWindow: (() => BrowserWindow | null) | null = null
 
-/** 获取当前显示 URL (管理状态) */
+/** 基础分配页 URL（设备分配的航显页面/页面模版/编排等，持久化）*/
 let currentDisplayUrl: string | null = null
+/** 覆盖层 URL（自由文本等临时消息，不持久化，撤回后清空回退到基础页）*/
+let overlayUrl: string | null = null
+
+/** 返回当前实际显示的 URL：有覆盖层时优先覆盖层，否则基础页 */
+function activeUrl(): string | null {
+  return overlayUrl || currentDisplayUrl
+}
 
 export function getDisplayUrl(): string | null {
-  return currentDisplayUrl
+  return activeUrl()
 }
 
 export function setDisplayUrl(url: string): void {
@@ -173,33 +187,48 @@ function handleCommand(cmd: MqttCommand): void {
   console.log('执行命令:', cmd.action)
 
   switch (cmd.action) {
-    case 'displayPage':
-      if (cmd.url) {
+    case 'displayPage': {
+      const isOverlay = cmd.overlay === true
+      if (isOverlay) {
+        // 覆盖层模式：自由文本发布（url 非空）或撤回（url 为空）
+        overlayUrl = cmd.url || null
+        console.log(overlayUrl ? '设置覆盖层 URL' : '清除覆盖层，回退基础页', overlayUrl || currentDisplayUrl || '(空)')
+      } else if (cmd.url) {
+        // 基础分配页：更新并持久化
         currentDisplayUrl = cmd.url
-        sendToRenderer('display-url-changed', cmd.url)
-        // 持久化 displayUrl 到配置文件，重启后可恢复
         if (currentConfig) {
           currentConfig.displayUrl = cmd.url
           saveConfigToDisk(currentConfig)
         }
-        // 延迟 3s 上报 page_loaded 回执，供驾驶舱"下发链路"统计已确认设备数
-        const loadedUrl = cmd.url
-        setTimeout(() => {
-          if (!currentConfig?.serverUrl || !currentConfig?.deviceId) return
-          fetch(`${currentConfig.serverUrl}/api/device-status-logs`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              deviceId: currentConfig.deviceId,
-              status: 'online',
-              timestamp: new Date().toISOString(),
-              message: JSON.stringify({ event: 'page_loaded', url: loadedUrl }),
-              currentUrl: loadedUrl,
-            }),
-            signal: AbortSignal.timeout(10000),
-          }).catch((e) => console.warn('page_loaded 上报失败:', e?.message || e))
-        }, 3000)
+      } else {
+        break
       }
+      const target = activeUrl()
+      sendToRenderer('display-url-changed', target || '')
+      // 延迟 3s 上报 page_loaded 回执
+      const loadedUrl = target || ''
+      setTimeout(() => {
+        if (!currentConfig?.serverUrl || !currentConfig?.deviceId) return
+        fetch(`${currentConfig.serverUrl}/api/device-status-logs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deviceId: currentConfig.deviceId,
+            status: 'online',
+            timestamp: new Date().toISOString(),
+            message: JSON.stringify({ event: 'page_loaded', url: loadedUrl, overlay: isOverlay }),
+            currentUrl: loadedUrl,
+          }),
+          signal: AbortSignal.timeout(10000),
+        }).catch((e) => console.warn('page_loaded 上报失败:', e?.message || e))
+      }, 3000)
+      break
+    }
+    case 'displayMarquee':
+      sendToRenderer('marquee-changed', {
+        text: cmd.text || '',
+        mode: cmd.marqueeMode || 'overlay',
+      })
       break
     case 'refreshPage':
       sendToRenderer('refresh-page')

@@ -35,6 +35,12 @@ const electronAPI = {
     ipcRenderer.on('refresh-page', listener)
     return () => ipcRenderer.removeListener('refresh-page', listener)
   },
+  onMarqueeChanged: (callback: (data: { text: string; mode: 'embedded' | 'overlay' }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: unknown) =>
+      callback(data as { text: string; mode: 'embedded' | 'overlay' })
+    ipcRenderer.on('marquee-changed', listener)
+    return () => ipcRenderer.removeListener('marquee-changed', listener)
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)
