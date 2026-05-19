@@ -24,6 +24,11 @@ export interface MqttCommand {
   text?: string
   // displayMarquee 模式：'embedded' 注入到 fids_webpage 页脚；'overlay' 播放器原生底部覆盖条
   marqueeMode?: 'embedded' | 'overlay'
+  // displayRegion：区域公告
+  // url 非空 = 设置；url='' = 清除
+  // 与 displayMarquee 互斥
+  regionPosition?: 'bottom' | 'right'
+  regionFraction?: number
 }
 
 let client: MqttClient | null = null
@@ -225,11 +230,38 @@ function handleCommand(cmd: MqttCommand): void {
       break
     }
     case 'displayMarquee':
+      // 与 region 互斥：设置 marquee 时清空 region 状态
+      sendToRenderer('region-changed', { url: '', position: 'bottom', fraction: 0 })
       sendToRenderer('marquee-changed', {
         text: cmd.text || '',
         mode: cmd.marqueeMode || 'overlay',
       })
       break
+    case 'displayRegion': {
+      const url = cmd.url || ''
+      const position = (cmd.regionPosition === 'right' ? 'right' : 'bottom') as 'bottom' | 'right'
+      const fraction = Math.max(0, Math.min(0.5, cmd.regionFraction ?? 0.33))
+      // 与 marquee 互斥：设置 region 时清空 marquee 状态
+      sendToRenderer('marquee-changed', { text: '', mode: 'overlay' })
+      sendToRenderer('region-changed', { url, position, fraction })
+      // 上报 page_loaded（含公告 URL）
+      setTimeout(() => {
+        if (!currentConfig?.serverUrl || !currentConfig?.deviceId) return
+        fetch(`${currentConfig.serverUrl}/api/device-status-logs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            deviceId: currentConfig.deviceId,
+            status: 'online',
+            timestamp: new Date().toISOString(),
+            message: JSON.stringify({ event: 'region_changed', regionUrl: url, position, fraction }),
+            currentUrl: url || (activeUrl() ?? ''),
+          }),
+          signal: AbortSignal.timeout(10000),
+        }).catch((e) => console.warn('region 上报失败:', e?.message || e))
+      }, 3000)
+      break
+    }
     case 'refreshPage':
       sendToRenderer('refresh-page')
       break

@@ -41,6 +41,14 @@ const electronAPI = {
     ipcRenderer.on('marquee-changed', listener)
     return () => ipcRenderer.removeListener('marquee-changed', listener)
   },
+  onRegionChanged: (
+    callback: (data: { url: string; position: 'bottom' | 'right'; fraction: number }) => void,
+  ) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: unknown) =>
+      callback(data as { url: string; position: 'bottom' | 'right'; fraction: number })
+    ipcRenderer.on('region-changed', listener)
+    return () => ipcRenderer.removeListener('region-changed', listener)
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

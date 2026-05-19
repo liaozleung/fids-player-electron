@@ -15,6 +15,11 @@ export function useElectronEvents() {
     text: '',
     mode: 'overlay',
   })
+  const [region, setRegion] = useState<{ url: string; position: 'bottom' | 'right'; fraction: number }>({
+    url: '',
+    position: 'bottom',
+    fraction: 0,
+  })
 
   const cleanups = useRef<Array<() => void>>([])
 
@@ -58,6 +63,12 @@ export function useElectronEvents() {
       })
     )
 
+    cleanups.current.push(
+      api.onRegionChanged((data) => {
+        setRegion(data)
+      })
+    )
+
     return () => {
       cleanups.current.forEach((cleanup) => cleanup())
       cleanups.current = []
@@ -74,6 +85,7 @@ export function useElectronEvents() {
     lastCommand,
     refreshTrigger,
     marquee,
+    region,
     clearLastCommand,
   }
 }
