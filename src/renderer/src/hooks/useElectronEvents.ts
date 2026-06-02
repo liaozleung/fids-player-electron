@@ -15,10 +15,13 @@ export function useElectronEvents() {
     text: '',
     mode: 'overlay',
   })
-  const [region, setRegion] = useState<{ url: string; position: 'bottom' | 'right'; fraction: number }>({
-    url: '',
-    position: 'bottom',
-    fraction: 0,
+  // 双槽设计：right 和 bottom 各占一个槽，互不覆盖，可同时显示
+  const [region, setRegion] = useState<{
+    right: { url: string; fraction: number }
+    bottom: { url: string; fraction: number }
+  }>({
+    right: { url: '', fraction: 0 },
+    bottom: { url: '', fraction: 0 },
   })
 
   const cleanups = useRef<Array<() => void>>([])
@@ -65,7 +68,20 @@ export function useElectronEvents() {
 
     cleanups.current.push(
       api.onRegionChanged((data) => {
-        setRegion(data)
+        // 协议：{ url, position: 'right'|'bottom', fraction }
+        // - url 非空 → 设置对应槽（right 或 bottom）
+        // - url 空 → 清空对应槽（如果传了 position）；传 'all' 则清空两个槽（撤回兜底）
+        const position = (data as any)?.position as 'right' | 'bottom' | 'all' | undefined
+        const url = (data as any)?.url ?? ''
+        const fraction = (data as any)?.fraction ?? 0
+        setRegion((prev) => {
+          if (position === 'all') {
+            return { right: { url: '', fraction: 0 }, bottom: { url: '', fraction: 0 } }
+          }
+          if (position === 'right') return { ...prev, right: { url, fraction } }
+          if (position === 'bottom') return { ...prev, bottom: { url, fraction } }
+          return prev
+        })
       })
     )
 

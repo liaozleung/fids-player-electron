@@ -230,8 +230,7 @@ function handleCommand(cmd: MqttCommand): void {
       break
     }
     case 'displayMarquee':
-      // 与 region 互斥：设置 marquee 时清空 region 状态
-      sendToRenderer('region-changed', { url: '', position: 'bottom', fraction: 0 })
+      // marquee 槽独立；不再与 region 互斥
       sendToRenderer('marquee-changed', {
         text: cmd.text || '',
         mode: cmd.marqueeMode || 'overlay',
@@ -241,8 +240,7 @@ function handleCommand(cmd: MqttCommand): void {
       const url = cmd.url || ''
       const position = (cmd.regionPosition === 'right' ? 'right' : 'bottom') as 'bottom' | 'right'
       const fraction = Math.max(0, Math.min(0.5, cmd.regionFraction ?? 0.33))
-      // 与 marquee 互斥：设置 region 时清空 marquee 状态
-      sendToRenderer('marquee-changed', { text: '', mode: 'overlay' })
+      // region 双槽：only 更新对应 position 的槽（right 或 bottom），不影响另一槽和 marquee
       sendToRenderer('region-changed', { url, position, fraction })
       // 上报 page_loaded（含公告 URL）
       setTimeout(() => {
