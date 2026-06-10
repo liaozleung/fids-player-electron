@@ -8,12 +8,15 @@ function App() {
   const [page, setPage] = useState<AppPage>('settings')
   const { mqttStatus, displayUrl, lastCommand, refreshTrigger, marquee, region } = useElectronEvents()
 
-  // 检查是否有已保存的配置 — 如果有设备ID且启用了全屏，自动进入显示模式
+  // 启动时检查配置是否已就绪：
+  //   - 多屏模式（config.screens 非空）→ 直接进 display 页（多屏不需要 settings 入口）
+  //   - 单屏模式：保留原条件（deviceId + fullscreen）
   useEffect(() => {
     window.electronAPI
       .getConfig()
       .then((config: DeviceConfig) => {
-        if (config.deviceId && config.fullscreen) {
+        const hasMultiScreen = Array.isArray((config as any).screens) && (config as any).screens.length > 0
+        if (hasMultiScreen || (config.deviceId && config.fullscreen)) {
           setPage('display')
         }
       })

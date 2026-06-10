@@ -35,7 +35,6 @@ function injectIntoSubFrames(frame: WebFrameMain): void {
   }
 }
 
-/** 读取第一个找到看门狗 canvas 的子 frame 的编码值，找不到返回 null */
 async function readWatchdogValue(frame: WebFrameMain): Promise<number | null> {
   for (const child of frame.frames) {
     try {
@@ -48,143 +47,173 @@ async function readWatchdogValue(frame: WebFrameMain): Promise<number | null> {
   return null
 }
 
-const CHECK_INTERVAL = 30_000    // 每 30s 检测一次
-const STALE_THRESHOLD = 90_000   // 90s 像素未变化则判定为冻结
-const MODULUS = 16_777_216       // 2^24，与前端编码一致
+const CHECK_INTERVAL = 30_000
+const STALE_THRESHOLD = 90_000
+const MODULUS = 16_777_216
 
-let watchdogTimer: ReturnType<typeof setInterval> | null = null
-let frozenSince: number | null = null
-// 启动后是否已主动同步一次"未冻结"状态到服务端
-// 防止：上次进程异常退出留下 watchdog_alert=true，新进程启动后页面正常但 DB 标记不会自动清除
-let recoveryAcknowledged = false
-let currentConfig: DeviceConfig | null = null
-let getMainWindow: (() => BrowserWindow | null) | null = null
-let getDisplayUrl: (() => string | null) | null = null
+/**
+ * 单屏看门狗服务。
+ * P0-b：每屏一个 WatchdogService，按各自 deviceId 上报告警 / 冻结日志。
+ */
+export class WatchdogService {
+  private timer: ReturnType<typeof setInterval> | null = null
+  private frozenSince: number | null = null
+  private recoveryAcknowledged = false
+  private config: DeviceConfig
+  private getMainWindow: () => BrowserWindow | null
+  private getDisplayUrl: () => string | null
+
+  constructor(
+    config: DeviceConfig,
+    getWindow: () => BrowserWindow | null,
+    displayUrlGetter: () => string | null,
+  ) {
+    this.config = config
+    this.getMainWindow = getWindow
+    this.getDisplayUrl = displayUrlGetter
+    this.start()
+  }
+
+  start(): void {
+    this.stop()
+    console.log(`[watchdog:${this.config.deviceId}] 已启动，检测间隔 30s，冻结阈值 90s`)
+    this.timer = setInterval(() => this.check(), CHECK_INTERVAL)
+  }
+
+  stop(): void {
+    if (this.timer) {
+      clearInterval(this.timer)
+      this.timer = null
+    }
+  }
+
+  updateConfig(config: DeviceConfig): void {
+    this.config = config
+  }
+
+  /** 显示 URL 切换时重置冻结计时，避免用旧状态误报 */
+  reset(): void {
+    this.frozenSince = null
+    this.recoveryAcknowledged = false
+    console.debug(`[watchdog:${this.config.deviceId}] 状态已重置`)
+  }
+
+  private async check(): Promise<void> {
+    const win = this.getMainWindow()
+    if (!win || win.isDestroyed()) return
+    if (!this.getDisplayUrl()) {
+      console.debug(`[watchdog:${this.config.deviceId}] 无显示 URL，跳过检测`)
+      return
+    }
+
+    try {
+      injectIntoSubFrames(win.webContents.mainFrame)
+    } catch (_) {}
+
+    try {
+      const decoded = await readWatchdogValue(win.webContents.mainFrame)
+      if (decoded === null) {
+        console.log(`[watchdog:${this.config.deviceId}] 未找到看门狗 canvas，等待页面加载...`)
+        return
+      }
+
+      const nowMod = Date.now() % MODULUS
+      let diff = nowMod - decoded
+      if (diff < 0) diff += MODULUS
+
+      console.log(`[watchdog:${this.config.deviceId}] canvas 值=${decoded} nowMod=${nowMod} diff=${Math.round(diff / 1000)}s`)
+
+      if (diff > STALE_THRESHOLD) {
+        const wasFrozen = this.frozenSince !== null
+        if (!this.frozenSince) this.frozenSince = Date.now()
+        const frozenSec = Math.round((Date.now() - this.frozenSince) / 1000)
+        console.warn(`[watchdog:${this.config.deviceId}] 页面疑似冻结，已持续 ${frozenSec}s，像素时差 ${Math.round(diff / 1000)}s`)
+        await this.reportFreeze(frozenSec, diff)
+        if (!wasFrozen) {
+          await this.notifyAlert(true, `页面冻结 ${frozenSec}s，像素时差 ${Math.round(diff / 1000)}s`)
+          this.recoveryAcknowledged = false
+        }
+      } else {
+        if (this.frozenSince) {
+          console.log(`[watchdog:${this.config.deviceId}] 页面已从冻结状态恢复`)
+          this.frozenSince = null
+          this.recoveryAcknowledged = true
+          await this.notifyAlert(false)
+        } else if (!this.recoveryAcknowledged) {
+          this.recoveryAcknowledged = true
+          console.debug(`[watchdog:${this.config.deviceId}] 启动后首次正常检测，主动同步未冻结状态`)
+          await this.notifyAlert(false)
+        }
+      }
+    } catch (e) {
+      console.error(`[watchdog:${this.config.deviceId}] 检测异常:`, e)
+    }
+  }
+
+  private async notifyAlert(alert: boolean, message?: string): Promise<void> {
+    const cfg = this.config
+    if (!cfg.serverUrl || !cfg.deviceId) return
+    const url = `${cfg.serverUrl}/api/device-watchdog`
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: cfg.deviceId, alert, message }),
+        signal: AbortSignal.timeout(5000),
+      })
+      console.log(`[watchdog:${cfg.deviceId}] 设备状态通知 alert=${alert} → HTTP ${resp.status}`)
+    } catch (e) {
+      console.error(`[watchdog:${cfg.deviceId}] 设备状态通知失败 (${url}):`, e)
+    }
+  }
+
+  private async reportFreeze(frozenSec: number, staleMs: number): Promise<void> {
+    const cfg = this.config
+    if (!cfg.serverUrl || !cfg.deviceId) return
+    try {
+      await fetch(`${cfg.serverUrl}/api/device-status-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: cfg.deviceId,
+          status: 'error',
+          timestamp: new Date().toISOString(),
+          message: `[Watchdog] 页面冻结 ${frozenSec}s，像素时差 ${Math.round(staleMs / 1000)}s`,
+        }),
+        signal: AbortSignal.timeout(5000),
+      })
+    } catch (e) {
+      console.error(`[watchdog:${cfg.deviceId}] 上报失败:`, e)
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 单例 wrapper：保持旧 API
+// ─────────────────────────────────────────────────────────────
+let defaultWatchdogService: WatchdogService | null = null
+
+export function setDefaultWatchdogService(svc: WatchdogService): void {
+  defaultWatchdogService = svc
+}
 
 export function startWatchdog(
   config: DeviceConfig,
   windowGetter: () => BrowserWindow | null,
-  displayUrlGetter: () => string | null
+  displayUrlGetter: () => string | null,
 ): void {
-  currentConfig = config
-  getMainWindow = windowGetter
-  getDisplayUrl = displayUrlGetter
-  stopWatchdog()
-  console.log('[Watchdog] 已启动，检测间隔 30s，冻结阈值 90s')
-  watchdogTimer = setInterval(checkWatchdog, CHECK_INTERVAL)
+  defaultWatchdogService?.stop()
+  defaultWatchdogService = new WatchdogService(config, windowGetter, displayUrlGetter)
 }
 
 export function stopWatchdog(): void {
-  if (watchdogTimer) {
-    clearInterval(watchdogTimer)
-    watchdogTimer = null
-  }
+  defaultWatchdogService?.stop()
 }
 
 export function updateWatchdogConfig(config: DeviceConfig): void {
-  currentConfig = config
+  defaultWatchdogService?.updateConfig(config)
 }
 
-/** 显示 URL 切换时重置冻结计时，避免用旧状态误报 */
 export function resetWatchdog(): void {
-  frozenSince = null
-  // URL 切换后需要等新页面跑起来再重新评估，恢复确认也归零
-  recoveryAcknowledged = false
-  console.debug('[Watchdog] 状态已重置')
-}
-
-async function checkWatchdog(): Promise<void> {
-  const win = getMainWindow?.()
-  if (!win || win.isDestroyed()) return
-
-  if (!getDisplayUrl?.()) {
-    console.debug('[Watchdog] 无显示 URL，跳过检测')
-    return
-  }
-
-  // 注入看门狗脚本到 iframe（幂等：已注入或托管的页面直接返回）
-  try {
-    injectIntoSubFrames(win.webContents.mainFrame)
-  } catch (_) {}
-
-  try {
-    const decoded = await readWatchdogValue(win.webContents.mainFrame)
-
-    if (decoded === null) {
-      console.log('[Watchdog] 未找到看门狗 canvas，等待页面加载...')
-      return
-    }
-
-    const nowMod = Date.now() % MODULUS
-    let diff = nowMod - decoded
-    if (diff < 0) diff += MODULUS
-
-    console.log(`[Watchdog] canvas 值=${decoded} nowMod=${nowMod} diff=${Math.round(diff / 1000)}s`)
-
-    if (diff > STALE_THRESHOLD) {
-      const wasAlreadyFrozen = frozenSince !== null
-      if (!frozenSince) frozenSince = Date.now()
-      const frozenSec = Math.round((Date.now() - frozenSince) / 1000)
-      console.warn(`[Watchdog] 页面疑似冻结，已持续 ${frozenSec}s，像素时差 ${Math.round(diff / 1000)}s`)
-      await reportFreeze(frozenSec, diff)
-      // 首次触发时同步更新设备告警状态
-      if (!wasAlreadyFrozen) {
-        await notifyWatchdogAlert(true, `页面冻结 ${frozenSec}s，像素时差 ${Math.round(diff / 1000)}s`)
-        // 重置：下次恢复时仍需要发送 alert=false
-        recoveryAcknowledged = false
-      }
-    } else {
-      if (frozenSince) {
-        // 本次进程内确实经历过冻结 → 通知恢复
-        console.log('[Watchdog] 页面已从冻结状态恢复')
-        frozenSince = null
-        recoveryAcknowledged = true
-        await notifyWatchdogAlert(false)
-      } else if (!recoveryAcknowledged) {
-        // 启动后首次"页面正常"，主动清一次 DB 中可能残留的告警标记
-        // 即使服务端本来就是 false，再写一次也是幂等的
-        recoveryAcknowledged = true
-        console.debug('[Watchdog] 启动后首次正常检测，主动同步未冻结状态')
-        await notifyWatchdogAlert(false)
-      }
-    }
-  } catch (e) {
-    console.error('[Watchdog] 检测异常:', e)
-  }
-}
-
-async function notifyWatchdogAlert(alert: boolean, message?: string): Promise<void> {
-  if (!currentConfig?.serverUrl || !currentConfig?.deviceId) return
-  const url = `${currentConfig.serverUrl}/api/device-watchdog`
-  try {
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId: currentConfig.deviceId, alert, message }),
-      signal: AbortSignal.timeout(5000),
-    })
-    console.log(`[Watchdog] 设备状态通知 alert=${alert} → HTTP ${resp.status}`)
-  } catch (e) {
-    console.error(`[Watchdog] 设备状态通知失败 (${url}):`, e)
-  }
-}
-
-async function reportFreeze(frozenSec: number, staleMs: number): Promise<void> {
-  if (!currentConfig?.serverUrl || !currentConfig?.deviceId) return
-
-  try {
-    await fetch(`${currentConfig.serverUrl}/api/device-status-logs`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        deviceId: currentConfig.deviceId,
-        status: 'error',
-        timestamp: new Date().toISOString(),
-        message: `[Watchdog] 页面冻结 ${frozenSec}s，像素时差 ${Math.round(staleMs / 1000)}s`,
-      }),
-      signal: AbortSignal.timeout(5000),
-    })
-  } catch (e) {
-    console.error('[Watchdog] 上报失败:', e)
-  }
+  defaultWatchdogService?.reset()
 }

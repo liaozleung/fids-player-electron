@@ -2,6 +2,25 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import { homedir, networkInterfaces } from 'os'
 
+/**
+ * 一机多屏的副屏配置项（一机多屏方案 A P0-a）。
+ *
+ * 单屏模式：config.screens 缺省 / 空数组 / 单元素 → 沿用现有逻辑（主屏全屏 + 单 deviceId 服务）。
+ * 多屏模式：config.screens 含 2+ 元素 → 每个 entry 对应一块物理屏，
+ *           index.ts 启动时 screen.getAllDisplays() 拿到目标 Display 后创建独立 BrowserWindow 全屏。
+ *
+ * P0-a 阶段（视觉布局验证）：所有屏共享 config.deviceId 的心跳 / MQTT 服务；
+ * P0-b 阶段（待办）：mqtt-client / heartbeat 工厂化，每屏独立 deviceId + 独立服务实例。
+ */
+export interface ScreenEntry {
+  /** 副屏的 deviceId（P0-b 启用 N 套独立服务后才用，P0-a 阶段仅做窗口布局） */
+  deviceId: string
+  /** Display 索引（screen.getAllDisplays() 数组下标，0=主屏，1=第一块副屏...） */
+  displayIndex: number
+  /** 该屏初始显示的 URL（缺省时沿用 config.displayUrl） */
+  displayUrl?: string
+}
+
 /** 设备配置 — 与 Tauri DeviceConfig 完全一致 */
 export interface DeviceConfig {
   deviceId: string
@@ -19,6 +38,8 @@ export interface DeviceConfig {
   displayUrl: string | null
   autoStart: boolean
   fullscreen: boolean
+  /** 一机多屏（可选）：详见 ScreenEntry */
+  screens?: ScreenEntry[]
 }
 
 /** 配置根目录 ~/.fids_player/ */
