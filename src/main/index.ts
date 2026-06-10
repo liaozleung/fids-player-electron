@@ -5,7 +5,7 @@ import { installFileLogger } from './logger'
 // 必须最早安装文件日志：Windows GUI 应用无控制台，只能靠文件看主进程输出
 installFileLogger()
 
-import { loadConfig, ScreenEntry, DeviceConfig } from './config'
+import { loadConfig, saveConfigToDisk, ScreenEntry, DeviceConfig } from './config'
 import { initIpcHandlers } from './ipc-handlers'
 import {
   MqttService,
@@ -83,9 +83,51 @@ function moveToDisplayAndFullscreen(win: BrowserWindow, display: Display): void 
   win.setFullScreen(true)
 }
 
-app.whenReady().then(() => {
+/**
+ * P3-c：启动前从 fids 拉 screens-config（一机多屏单点配置）。
+ * 成功 → 覆盖 config.screens 并落盘；失败 → fallback 用本地缓存（config.json 里上次拉到的）。
+ * 超时 3s 防止远程不可达卡启动。
+ */
+async function syncScreensFromServer(cfg: DeviceConfig): Promise<ScreenEntry[] | null> {
+  if (!cfg.serverUrl || !cfg.deviceId) return null
+  const url = `${cfg.serverUrl}/api/devices/screens-config?deviceId=${encodeURIComponent(cfg.deviceId)}`
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(3000) })
+    if (!resp.ok) {
+      console.warn(`[main] screens-config 拉取失败: HTTP ${resp.status}`)
+      return null
+    }
+    const result = await resp.json() as { success: boolean; screens?: ScreenEntry[] }
+    if (!result.success || !Array.isArray(result.screens)) {
+      console.warn(`[main] screens-config 响应异常:`, result)
+      return null
+    }
+    return result.screens
+  } catch (e) {
+    console.warn(`[main] screens-config 拉取异常（fallback 用本地缓存）:`, (e as Error)?.message || e)
+    return null
+  }
+}
+
+app.whenReady().then(async () => {
   const config = loadConfig()
   initIpcHandlers(config)
+
+  // P3-c：尝试从 fids 拉最新 screens 配置覆盖本地（带 3s 超时；失败用本地缓存）
+  const remoteScreens = await syncScreensFromServer(config)
+  if (remoteScreens) {
+    const localStr = JSON.stringify(config.screens || [])
+    const remoteStr = JSON.stringify(remoteScreens)
+    if (localStr !== remoteStr) {
+      // 多屏：用远程结果；单屏（仅 host 自己一条）：保留本地 screens 字段为空，回退单屏路径
+      const isMulti = remoteScreens.length > 1
+      config.screens = isMulti ? remoteScreens : undefined
+      saveConfigToDisk(config)
+      console.log(`[main] screens-config 同步：${isMulti ? `多屏 ${remoteScreens.length} 块` : '单屏'}（已落盘）`)
+    } else {
+      console.log(`[main] screens-config 同步：与本地一致，无需更新`)
+    }
+  }
 
   // 判定单屏 vs 多屏
   const isMultiScreen = Array.isArray(config.screens) && config.screens.length > 0
