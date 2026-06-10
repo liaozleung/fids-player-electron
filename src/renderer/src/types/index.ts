@@ -1,9 +1,17 @@
+/** 一机多屏的副屏配置项（与主进程 ScreenEntry 对应） */
+export interface ScreenEntry {
+  deviceId: string
+  displayIndex: number
+  displayUrl?: string
+}
+
 /** 设备配置 — 与主进程 DeviceConfig 对应 */
 export interface DeviceConfig {
   deviceId: string
   deviceName: string
   macAddress: string
   serverUrl: string
+  dataChannelUrl?: string
   mqttBroker: string
   mqttPort: number
   mqttUsername: string
@@ -12,6 +20,8 @@ export interface DeviceConfig {
   displayUrl: string | null
   autoStart: boolean
   fullscreen: boolean
+  /** 一机多屏：screens 数组非空时启用 */
+  screens?: ScreenEntry[]
 }
 
 /** 设备运行状态 */

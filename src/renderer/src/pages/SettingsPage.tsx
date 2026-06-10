@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ServerConfig } from '../components/ServerConfig'
 import { DeviceInfo } from '../components/DeviceInfo'
+import { ScreensConfig } from '../components/ScreensConfig'
 import { StatusBar } from '../components/StatusBar'
 import { LogViewer } from '../components/LogViewer'
 import type { DeviceConfig, MqttStatus, MqttCommand } from '../types'
@@ -59,7 +60,13 @@ export function SettingsPage({
     setMessage(null)
     try {
       await window.electronAPI.saveConfig(config)
-      setMessage({ type: 'success', text: '配置已保存' })
+      const hasMultiScreen = Array.isArray(config.screens) && config.screens.length > 0
+      setMessage({
+        type: 'success',
+        text: hasMultiScreen
+          ? '配置已保存。屏配置改动需重启 player 生效（关闭窗口或退出后重新启动）'
+          : '配置已保存',
+      })
     } catch (e) {
       setMessage({ type: 'error', text: `保存失败: ${e}` })
     } finally {
@@ -99,6 +106,7 @@ export function SettingsPage({
           <div className="settings-column">
             <DeviceInfo config={config} onChange={setConfig} />
             <ServerConfig config={config} onChange={setConfig} />
+            <ScreensConfig config={config} onChange={setConfig} />
           </div>
           <div className="settings-column">
             <LogViewer commands={commandLog} />
