@@ -22,13 +22,24 @@ export function initIpcHandlers(initialConfig: DeviceConfig): void {
     return runtimeConfig
   })
 
-  // 保存设备配置
-  ipcMain.handle('save-config', (_event, newConfig: DeviceConfig) => {
+  // 保存设备配置 + 反向同步新增副屏到 fids（P3-d）
+  ipcMain.handle('save-config', async (_event, newConfig: DeviceConfig) => {
+    const prevScreens = runtimeConfig?.screens || []
     saveConfigToDisk(newConfig)
     runtimeConfig = newConfig
-    // 通知 MQTT 和心跳模块更新配置
     updateMqttConfig(newConfig)
     updateHeartbeatConfig(newConfig)
+
+    // 找出新增的副屏 entry（deviceId 在新但不在旧），调 fids API 创建 device 记录
+    const newScreens = newConfig.screens || []
+    const prevIds = new Set(prevScreens.map((s) => s.deviceId))
+    const added = newScreens.filter((s) => !prevIds.has(s.deviceId) && s.deviceId !== newConfig.deviceId)
+    if (added.length > 0) {
+      await syncNewSubScreensToFids(newConfig, added).catch((e) => {
+        console.warn('[ipc] 反向同步副屏到 fids 失败:', e?.message || e)
+      })
+    }
+    return { syncedCount: added.length }
   })
 
   // 获取 MAC 地址
@@ -164,4 +175,45 @@ export function initIpcHandlers(initialConfig: DeviceConfig): void {
 /** 获取运行时配置 */
 export function getRuntimeConfig(): DeviceConfig {
   return runtimeConfig
+}
+
+/**
+ * P3-d：player settings 新增的副屏 entry 反向同步到 fids，让 admin UI 立刻看到。
+ * 调专用 POST /api/devices/sync-sub-screen（middleware 白名单内，无需 JWT），
+ * 幂等：deviceId 已存在直接 200 返回。
+ */
+async function syncNewSubScreensToFids(
+  config: DeviceConfig,
+  added: Array<{ deviceId: string; displayIndex: number }>,
+): Promise<void> {
+  if (!config.serverUrl || !config.deviceId) {
+    console.warn('[ipc] 同步副屏：缺 serverUrl 或 deviceId')
+    return
+  }
+  for (const entry of added) {
+    try {
+      const resp = await fetch(`${config.serverUrl}/api/devices/sync-sub-screen`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          deviceId: entry.deviceId,
+          device_name: entry.deviceId,
+          hostDeviceId: config.deviceId,
+          displayIndex: entry.displayIndex,
+        }),
+        signal: AbortSignal.timeout(10000),
+      })
+      if (resp.ok) {
+        const r = (await resp.json()) as { alreadyExists?: boolean }
+        console.log(
+          `[ipc] 副屏 ${entry.deviceId} (displayIndex=${entry.displayIndex}) ${r.alreadyExists ? '已存在' : '已同步到 admin'}`,
+        )
+      } else {
+        const body = await resp.text()
+        console.warn(`[ipc] 同步 ${entry.deviceId} 失败: HTTP ${resp.status} ${body.slice(0, 200)}`)
+      }
+    } catch (e) {
+      console.warn(`[ipc] 同步 ${entry.deviceId} 异常:`, (e as Error)?.message || e)
+    }
+  }
 }
