@@ -105,6 +105,34 @@ export class HeartbeatService {
       }
       console.debug(`[heartbeat:${cfg.deviceId}] 发送成功`)
 
+      // 主路径：直接用 Spring Boot 心跳响应里的 currentDisplayUrl。
+      // hzwl-data-channel 已经从 devices.current_display_url 读好返回，省一次 Next.js 调用、
+      // 也绕开 Next.js middleware 鉴权的边角（display-url 端点之前被 /login 拦截，
+      // 导致冷启动多屏所有副屏都拿不到自己的 URL，所有屏显示同一页面或空白）。
+      if (!this.slot.getDisplayUrl()) {
+        try {
+          const body = (await resp.json()) as { code?: number; data?: { currentDisplayUrl?: string | null } }
+          const fromHeartbeat = body?.code === 200 ? body?.data?.currentDisplayUrl : null
+          if (fromHeartbeat) {
+            console.log(`[heartbeat:${cfg.deviceId}] 心跳响应携带 displayUrl:`, fromHeartbeat)
+            this.slot.setDisplayUrl(fromHeartbeat)
+            if (this.persistDisplayUrl) {
+              this.config.displayUrl = fromHeartbeat
+              saveConfigToDisk(this.config)
+            }
+            const win = this.getMainWindow()
+            if (win && !win.isDestroyed()) {
+              win.webContents.send('display-url-changed', fromHeartbeat)
+            }
+            this.displayUrlBootstrapped = true
+          }
+        } catch (parseErr) {
+          // 解析失败不阻塞，走 fallback
+          console.warn(`[heartbeat:${cfg.deviceId}] 心跳响应解析失败:`, (parseErr as Error)?.message)
+        }
+      }
+
+      // Fallback：Next.js 端点（仅当心跳响应没带 URL 时再试一次）
       if (!this.displayUrlBootstrapped && !this.slot.getDisplayUrl()) {
         this.displayUrlBootstrapped = true
         this.bootstrapDisplayUrl().catch((e) =>
