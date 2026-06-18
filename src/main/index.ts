@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, screen, Display } from 'electron'
+import { app, BrowserWindow, globalShortcut, screen, Display, Menu } from 'electron'
 import { join } from 'path'
 import { installFileLogger } from './logger'
 
@@ -52,12 +52,20 @@ function createBrowserWindow(initialUrl?: string): BrowserWindow {
     width: 1920,
     height: 1080,
     show: false,
+    // 航显 kiosk：去掉所有窗口装饰
+    frame: false,            // 无标题栏 / 无菜单栏 / 无边框（Windows 上不去掉的话顶部会显示一排菜单）
+    autoHideMenuBar: true,   // 兼容某些 Linux WM 在 frame:false 下仍渲染菜单
+    fullscreen: true,        // 创建时即进入全屏（创建后 setFullScreen 在 Windows 上有时不生效）
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       webSecurity: false,
     },
   })
+
+  // 双保险：移除窗口级 menu（Windows / Linux 上 BrowserWindow 默认会附带一份）
+  win.setMenuBarVisibility(false)
+  win.setMenu(null)
 
   if (process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -80,7 +88,8 @@ function createBrowserWindow(initialUrl?: string): BrowserWindow {
 function moveToDisplayAndFullscreen(win: BrowserWindow, display: Display): void {
   const { x, y, width, height } = display.bounds
   win.setBounds({ x, y, width, height })
-  win.setFullScreen(true)
+  // Windows 上 frame:false 后 setFullScreen 真正生效；保留 setFullScreen 作位移到目标显示器后的兜底
+  if (!win.isFullScreen()) win.setFullScreen(true)
 }
 
 /**
@@ -110,6 +119,9 @@ async function syncScreensFromServer(cfg: DeviceConfig): Promise<ScreenEntry[] |
 }
 
 app.whenReady().then(async () => {
+  // 在创建任何 BrowserWindow 前移除应用级菜单（Windows 默认会自动给每个 BrowserWindow 套一份）
+  Menu.setApplicationMenu(null)
+
   const config = loadConfig()
   initIpcHandlers(config)
 
@@ -215,6 +227,13 @@ app.whenReady().then(async () => {
   // Ctrl+Shift+Alt+I 打开所有屏 DevTools（多屏调试）
   globalShortcut.register('CommandOrControl+Shift+Alt+I', () => {
     for (const sw of screenWindows) sw.window.webContents.toggleDevTools()
+  })
+  // F11 在当前聚焦窗口切换全屏（运维误退出全屏时手动恢复用）
+  globalShortcut.register('F11', () => {
+    const focused = BrowserWindow.getFocusedWindow() || mainWindow
+    if (focused && !focused.isDestroyed()) {
+      focused.setFullScreen(!focused.isFullScreen())
+    }
   })
 
   app.on('activate', () => {

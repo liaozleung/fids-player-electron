@@ -1,6 +1,6 @@
 {
   "name": "fids-player-electron",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "FIDS 航显播放器 (Electron 版)",
   "author": "hzwl",
   "homepage": "https://github.com/hzwl/fids-player-electron",
