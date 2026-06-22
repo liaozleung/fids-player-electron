@@ -8,10 +8,24 @@ fi
 REMOTE_USER=$1
 shift
 
-LOCAL_FILE="/Users/hzwl/proj_fids/fids_player_electron/dist/fids-player-electron-0.1.0.tar.gz"
+# 自动定位 dist 下最新构建的 tar.gz（按修改时间，不依赖 package.json 版本号）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIST_DIR="${SCRIPT_DIR}/dist"
+LOCAL_FILE=$(ls -t "${DIST_DIR}"/fids-player-electron-*.tar.gz 2>/dev/null | head -1)
+if [ -z "$LOCAL_FILE" ]; then
+  echo "❌ 未在 ${DIST_DIR} 下找到 fids-player-electron-*.tar.gz，请先 npm run build:linux"
+  exit 1
+fi
+PACKAGE_NAME=$(basename "$LOCAL_FILE")
+# 从 fids-player-electron-<VERSION>.tar.gz 提取 <VERSION>
+VERSION=${PACKAGE_NAME#fids-player-electron-}
+VERSION=${VERSION%.tar.gz}
+EXTRACT_DIR="fids-player-electron-${VERSION}"
 REMOTE_DIR="/opt/fids-player"
-PACKAGE_NAME="fids-player-electron-0.1.0.tar.gz"
-EXTRACT_DIR="fids-player-electron-0.1.0"
+
+echo "📦 本次部署版本: ${VERSION}"
+echo "   本地包: ${LOCAL_FILE}"
+echo ""
 
 for REMOTE_HOST in "$@"
 do

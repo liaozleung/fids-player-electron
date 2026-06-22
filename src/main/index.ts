@@ -47,10 +47,16 @@ let mainWindow: BrowserWindow | null = null
 /** 所有屏窗口（含主屏；主屏一定是 screenWindows[0]） */
 const screenWindows: ScreenWindow[] = []
 
-function createBrowserWindow(initialUrl?: string): BrowserWindow {
+function createBrowserWindow(display: Display, initialUrl?: string): BrowserWindow {
+  // 关键：BrowserWindow 在 fullscreen:true 状态下创建后，setBounds 会被静默忽略，
+  // 导致多屏场景所有副屏窗口都被卡在主屏。所以必须在构造参数里就给定目标 display 的 x/y/width/height，
+  // Electron 会在 x/y 落入的 display 上全屏。
+  const { x, y, width, height } = display.bounds
   const win = new BrowserWindow({
-    width: 1920,
-    height: 1080,
+    x,
+    y,
+    width,
+    height,
     show: false,
     // 航显 kiosk：去掉所有窗口装饰
     frame: false,            // 无标题栏 / 无菜单栏 / 无边框（Windows 上不去掉的话顶部会显示一排菜单）
@@ -85,11 +91,18 @@ function createBrowserWindow(initialUrl?: string): BrowserWindow {
   return win
 }
 
+/**
+ * 把现有窗口移动到指定 display 并全屏。
+ * 注意：fullscreen 状态下 setBounds 会被忽略，必须先临时退出全屏，setBounds 后再回去。
+ * createBrowserWindow 已经在构造时把窗口放到目标 display 了，本函数只用于"事后改屏"场景
+ * （如 displayIndex 改了、屏数变了想重新分配）。日常启动流程不再依赖此函数定位。
+ */
 function moveToDisplayAndFullscreen(win: BrowserWindow, display: Display): void {
   const { x, y, width, height } = display.bounds
+  const wasFullscreen = win.isFullScreen()
+  if (wasFullscreen) win.setFullScreen(false)
   win.setBounds({ x, y, width, height })
-  // Windows 上 frame:false 后 setFullScreen 真正生效；保留 setFullScreen 作位移到目标显示器后的兜底
-  if (!win.isFullScreen()) win.setFullScreen(true)
+  win.setFullScreen(true)
 }
 
 /**
@@ -155,8 +168,8 @@ app.whenReady().then(async () => {
     if (!allDisplays[entry.displayIndex]) {
       console.warn(`[main] displayIndex=${entry.displayIndex} 超出范围（仅 ${allDisplays.length} 个 Display），回退主屏`)
     }
-    const win = createBrowserWindow(entry.displayUrl)
-    moveToDisplayAndFullscreen(win, target)
+    // 构造时就把窗口放到目标 display 上（fullscreen 状态下事后 setBounds 会被忽略）
+    const win = createBrowserWindow(target, entry.displayUrl)
 
     // 屏级 config 副本：覆盖 deviceId / displayUrl
     const screenConfig: DeviceConfig = {
@@ -239,8 +252,7 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       // mac dock 重新激活：单屏简化恢复
-      const win = createBrowserWindow()
-      moveToDisplayAndFullscreen(win, allDisplays[0])
+      const win = createBrowserWindow(allDisplays[0])
       screenWindows.length = 0
       screenWindows.push({
         deviceId: config.deviceId,
