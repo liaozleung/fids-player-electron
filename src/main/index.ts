@@ -189,8 +189,14 @@ function createSpannedWindow(displays: Display[], initialUrl?: string): BrowserW
  * P3-c：启动前从 fids 拉 screens-config（一机多屏单点配置）。
  * 成功 → 覆盖 config.screens 并落盘；失败 → fallback 用本地缓存（config.json 里上次拉到的）。
  * 超时 3s 防止远程不可达卡启动。
+ *
+ * Phase B 扩展：服务器返回也带 screenSpan 字段（'horizontal-2' | null），用于同步跨屏模式。
  */
-async function syncScreensFromServer(cfg: DeviceConfig): Promise<ScreenEntry[] | null> {
+interface ScreensConfigResult {
+  screens: ScreenEntry[]
+  screenSpan: 'horizontal-2' | null
+}
+async function syncScreensFromServer(cfg: DeviceConfig): Promise<ScreensConfigResult | null> {
   if (!cfg.serverUrl || !cfg.deviceId) return null
   const url = `${cfg.serverUrl}/api/devices/screens-config?deviceId=${encodeURIComponent(cfg.deviceId)}`
   try {
@@ -199,12 +205,19 @@ async function syncScreensFromServer(cfg: DeviceConfig): Promise<ScreenEntry[] |
       console.warn(`[main] screens-config 拉取失败: HTTP ${resp.status}`)
       return null
     }
-    const result = await resp.json() as { success: boolean; screens?: ScreenEntry[] }
+    const result = (await resp.json()) as {
+      success: boolean
+      screens?: ScreenEntry[]
+      screenSpan?: 'horizontal-2' | null
+    }
     if (!result.success || !Array.isArray(result.screens)) {
       console.warn(`[main] screens-config 响应异常:`, result)
       return null
     }
-    return result.screens
+    return {
+      screens: result.screens,
+      screenSpan: result.screenSpan === 'horizontal-2' ? 'horizontal-2' : null,
+    }
   } catch (e) {
     console.warn(`[main] screens-config 拉取异常（fallback 用本地缓存）:`, (e as Error)?.message || e)
     return null
@@ -218,25 +231,26 @@ app.whenReady().then(async () => {
   const config = loadConfig()
   initIpcHandlers(config)
 
-  // P3-c：尝试从 fids 拉最新 screens 配置覆盖本地（带 3s 超时；失败用本地缓存）
-  // 跨屏模式（config.screenSpan 已配置）优先使用本地 screens，跳过服务器同步覆盖 ——
-  // 服务器目前只支持"独立多屏"语义，若跨屏 sync 会把本地跨屏 screens 覆盖成单屏。
-  if (config.screenSpan) {
-    console.log(`[main] 检测到本地已配 screenSpan="${config.screenSpan}"，跳过 screens-config 服务器同步（保留本地跨屏配置）`)
-  } else {
-    const remoteScreens = await syncScreensFromServer(config)
-    if (remoteScreens) {
-      const localStr = JSON.stringify(config.screens || [])
-      const remoteStr = JSON.stringify(remoteScreens)
-      if (localStr !== remoteStr) {
-        // 多屏：用远程结果；单屏（仅 host 自己一条）：保留本地 screens 字段为空，回退单屏路径
-        const isMulti = remoteScreens.length > 1
-        config.screens = isMulti ? remoteScreens : undefined
-        saveConfigToDisk(config)
-        console.log(`[main] screens-config 同步：${isMulti ? `多屏 ${remoteScreens.length} 块` : '单屏'}（已落盘）`)
-      } else {
-        console.log(`[main] screens-config 同步：与本地一致，无需更新`)
-      }
+  // P3-c + Phase B：从 fids 拉最新 screens 配置 + screenSpan 覆盖本地（3s 超时；失败用本地）
+  // 服务器是权威：admin UI 里的配置决定了每台设备是"独立多屏"还是"跨屏拼接"。
+  const remoteResult = await syncScreensFromServer(config)
+  if (remoteResult) {
+    const { screens: remoteScreens, screenSpan: remoteScreenSpan } = remoteResult
+    const isMulti = remoteScreens.length > 1
+    const nextScreens = isMulti ? remoteScreens : undefined
+    const nextSpan = remoteScreenSpan || undefined // null/undefined 一律清空本地
+    const localScreensStr = JSON.stringify(config.screens || [])
+    const remoteScreensStr = JSON.stringify(remoteScreens)
+    const changed = localScreensStr !== remoteScreensStr || config.screenSpan !== nextSpan
+    if (changed) {
+      config.screens = nextScreens
+      config.screenSpan = nextSpan
+      saveConfigToDisk(config)
+      console.log(
+        `[main] screens-config 同步：${isMulti ? `多屏 ${remoteScreens.length} 块` : '单屏'}，screenSpan=${nextSpan ?? '(独立)'}（已落盘）`,
+      )
+    } else {
+      console.log(`[main] screens-config 同步：与本地一致，无需更新`)
     }
   }
 
