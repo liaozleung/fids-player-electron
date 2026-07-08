@@ -40,6 +40,15 @@ export interface DeviceConfig {
   fullscreen: boolean
   /** 一机多屏（可选）：详见 ScreenEntry */
   screens?: ScreenEntry[]
+  /**
+   * 跨屏拼接模式（可选）：
+   * - undefined / 未设置：独立多屏（每屏独立显示一个页面，现有默认行为）
+   * - 'horizontal-2'：把 screens[0] 和 screens[1] 两块屏水平拼接成一块虚拟屏，
+   *   由**一个** BrowserWindow 横跨两屏显示同一个页面（32:9 场景）。
+   *   前提：OS 必须已把两屏配成扩展显示模式（不是复制/独立空间），且两屏水平相邻。
+   *   跨屏模式下只用 screens[0] 的 deviceId 起心跳/MQTT/watchdog；screens[1] 不启动独立服务。
+   */
+  screenSpan?: 'horizontal-2'
 }
 
 /** 配置根目录 ~/.fids_player/ */

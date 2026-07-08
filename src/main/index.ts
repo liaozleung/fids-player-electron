@@ -106,6 +106,86 @@ function moveToDisplayAndFullscreen(win: BrowserWindow, display: Display): void 
 }
 
 /**
+ * 跨屏拼接模式：一个 BrowserWindow 横跨多块 display，形成"虚拟大屏"（如两块 16:9 拼 32:9）。
+ *
+ * 关键差异（vs createBrowserWindow）：
+ * - **不能用 fullscreen:true**：OS 会把 fullscreen 窗口锁在单块 display 内；必须用 frameless
+ *   + 精确 setBounds 覆盖多屏合并 bounds 达到"跨屏全屏"效果。
+ * - 前提：OS 已把参与合并的屏配成扩展显示（不是复制、不是独立空间）。
+ * - 两屏 bounds 合并公式：min(x) / min(y) / max(x+w) / max(y+h)。
+ */
+function createSpannedWindow(displays: Display[], initialUrl?: string): BrowserWindow {
+  const xs = displays.map((d) => d.bounds.x)
+  const ys = displays.map((d) => d.bounds.y)
+  const rights = displays.map((d) => d.bounds.x + d.bounds.width)
+  const bottoms = displays.map((d) => d.bounds.y + d.bounds.height)
+  const x = Math.min(...xs)
+  const y = Math.min(...ys)
+  const width = Math.max(...rights) - x
+  const height = Math.max(...bottoms) - y
+
+  // 诊断日志：各屏 bounds + scaleFactor + 计算后的合并 bounds
+  displays.forEach((d, i) => {
+    console.log(
+      `[main][spanned] display[${i}] bounds=${JSON.stringify(d.bounds)} scale=${(d as unknown as { scaleFactor?: number }).scaleFactor}`,
+    )
+  })
+  console.log(`[main][spanned] 计算合并 bounds → x=${x} y=${y} width=${width} height=${height}`)
+
+  const win = new BrowserWindow({
+    x,
+    y,
+    width,
+    height,
+    show: false,
+    frame: false,
+    autoHideMenuBar: true,
+    fullscreen: false, // 关键：fullscreen 会被 OS 锁在单屏，跨屏必须用 frameless + 精确 bounds
+    resizable: false,
+    movable: false,
+    // 不用 setAlwaysOnTop('screen-saver')：该 level 在 macOS 上会把窗口 clip 到单屏
+    hasShadow: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      webSecurity: false,
+    },
+  })
+
+  win.setMenuBarVisibility(false)
+  win.setMenu(null)
+  win.setBounds({ x, y, width, height })
+  console.log(`[main][spanned] 构造后 win.getBounds()=`, JSON.stringify(win.getBounds()))
+
+  if (process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+
+  win.on('ready-to-show', () => {
+    win.show()
+    win.setBounds({ x, y, width, height })
+    // macOS 有时会在 show 后把 window 拉回单屏，多次校正确保跨屏 bounds
+    setTimeout(() => {
+      win.setBounds({ x, y, width, height })
+      console.log(`[main][spanned] show +100ms win.getBounds()=`, JSON.stringify(win.getBounds()))
+    }, 100)
+    setTimeout(() => {
+      win.setBounds({ x, y, width, height })
+      console.log(`[main][spanned] show +500ms win.getBounds()=`, JSON.stringify(win.getBounds()))
+    }, 500)
+    if (initialUrl) {
+      win.webContents.once('did-finish-load', () => {
+        win.webContents.send('display-url-changed', initialUrl)
+      })
+    }
+  })
+
+  return win
+}
+
+/**
  * P3-c：启动前从 fids 拉 screens-config（一机多屏单点配置）。
  * 成功 → 覆盖 config.screens 并落盘；失败 → fallback 用本地缓存（config.json 里上次拉到的）。
  * 超时 3s 防止远程不可达卡启动。
@@ -139,18 +219,24 @@ app.whenReady().then(async () => {
   initIpcHandlers(config)
 
   // P3-c：尝试从 fids 拉最新 screens 配置覆盖本地（带 3s 超时；失败用本地缓存）
-  const remoteScreens = await syncScreensFromServer(config)
-  if (remoteScreens) {
-    const localStr = JSON.stringify(config.screens || [])
-    const remoteStr = JSON.stringify(remoteScreens)
-    if (localStr !== remoteStr) {
-      // 多屏：用远程结果；单屏（仅 host 自己一条）：保留本地 screens 字段为空，回退单屏路径
-      const isMulti = remoteScreens.length > 1
-      config.screens = isMulti ? remoteScreens : undefined
-      saveConfigToDisk(config)
-      console.log(`[main] screens-config 同步：${isMulti ? `多屏 ${remoteScreens.length} 块` : '单屏'}（已落盘）`)
-    } else {
-      console.log(`[main] screens-config 同步：与本地一致，无需更新`)
+  // 跨屏模式（config.screenSpan 已配置）优先使用本地 screens，跳过服务器同步覆盖 ——
+  // 服务器目前只支持"独立多屏"语义，若跨屏 sync 会把本地跨屏 screens 覆盖成单屏。
+  if (config.screenSpan) {
+    console.log(`[main] 检测到本地已配 screenSpan="${config.screenSpan}"，跳过 screens-config 服务器同步（保留本地跨屏配置）`)
+  } else {
+    const remoteScreens = await syncScreensFromServer(config)
+    if (remoteScreens) {
+      const localStr = JSON.stringify(config.screens || [])
+      const remoteStr = JSON.stringify(remoteScreens)
+      if (localStr !== remoteStr) {
+        // 多屏：用远程结果；单屏（仅 host 自己一条）：保留本地 screens 字段为空，回退单屏路径
+        const isMulti = remoteScreens.length > 1
+        config.screens = isMulti ? remoteScreens : undefined
+        saveConfigToDisk(config)
+        console.log(`[main] screens-config 同步：${isMulti ? `多屏 ${remoteScreens.length} 块` : '单屏'}（已落盘）`)
+      } else {
+        console.log(`[main] screens-config 同步：与本地一致，无需更新`)
+      }
     }
   }
 
@@ -162,6 +248,72 @@ app.whenReady().then(async () => {
 
   const allDisplays = screen.getAllDisplays()
   console.log(`[main] 多屏配置: ${screensConfig.length} 个屏；系统检测到 ${allDisplays.length} 个 Display`)
+
+  // 跨屏拼接模式：两屏合并成一块虚拟屏，由一个 BrowserWindow 横跨显示
+  const isSpanMode = config.screenSpan === 'horizontal-2' && screensConfig.length >= 2
+  if (isSpanMode) {
+    const targetDisplays = screensConfig.slice(0, 2).map((entry) =>
+      allDisplays[entry.displayIndex] ?? allDisplays[0],
+    )
+    const mainEntry = screensConfig[0]
+    const win = createSpannedWindow(targetDisplays, mainEntry.displayUrl)
+
+    // 跨屏模式：把两屏当成一个"虚拟设备"，只用主屏 deviceId 起心跳/MQTT/watchdog
+    // 副屏 deviceId 在跨屏模式下不启动独立服务（Phase A 简化，后续如需可扩展）
+    const spannedConfig: DeviceConfig = {
+      ...config,
+      deviceId: mainEntry.deviceId,
+      displayUrl: mainEntry.displayUrl ?? null,
+    }
+    const getWin = (): BrowserWindow | null => (win.isDestroyed() ? null : win)
+
+    initMqtt(spannedConfig, getWin)
+    startHeartbeat(spannedConfig, getWin)
+    startWatchdog(spannedConfig, getWin, getDisplayUrl)
+    win.webContents.on('ipc-message', (_event, channel) => {
+      if (channel === 'display-url-changed') resetWatchdog()
+    })
+
+    screenWindows.push({
+      deviceId: mainEntry.deviceId,
+      display: targetDisplays[0],
+      window: win,
+      mqtt: null as unknown as MqttService,
+      heartbeat: null as unknown as HeartbeatService,
+      watchdog: null as unknown as WatchdogService,
+    })
+    mainWindow = win
+
+    const totalBounds = {
+      x: Math.min(...targetDisplays.map((d) => d.bounds.x)),
+      y: Math.min(...targetDisplays.map((d) => d.bounds.y)),
+      width:
+        Math.max(...targetDisplays.map((d) => d.bounds.x + d.bounds.width)) -
+        Math.min(...targetDisplays.map((d) => d.bounds.x)),
+      height:
+        Math.max(...targetDisplays.map((d) => d.bounds.y + d.bounds.height)) -
+        Math.min(...targetDisplays.map((d) => d.bounds.y)),
+    }
+    console.log(
+      `[main] 跨屏模式(horizontal-2)：合并显示 ${targetDisplays.length} 块屏，主 deviceId=${mainEntry.deviceId}，总 bounds=${JSON.stringify(totalBounds)}`,
+    )
+    console.log(
+      `[main] 前提提醒：OS 必须已配置扩展显示模式（非复制/独立空间），且两屏物理相邻`,
+    )
+
+    disableScreenSaver()
+    globalShortcut.register('CommandOrControl+Shift+I', () => {
+      mainWindow?.webContents.toggleDevTools()
+    })
+    globalShortcut.register('F11', () => {
+      const focused = BrowserWindow.getFocusedWindow() || mainWindow
+      if (focused && !focused.isDestroyed()) {
+        focused.setFullScreen(!focused.isFullScreen())
+      }
+    })
+
+    return // 跨屏路径完成，跳过下面的独立多屏循环
+  }
 
   for (const entry of screensConfig) {
     const target = allDisplays[entry.displayIndex] ?? allDisplays[0]
