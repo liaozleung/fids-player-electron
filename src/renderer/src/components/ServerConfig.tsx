@@ -25,6 +25,16 @@ export function ServerConfig({ config, onChange }: ServerConfigProps) {
       </label>
 
       <label className="config-field">
+        <span>数据通道地址</span>
+        <input
+          type="text"
+          value={config.dataChannelUrl || ''}
+          onChange={(e) => update('dataChannelUrl', e.target.value)}
+          placeholder="http://192.168.0.200:9203"
+        />
+      </label>
+
+      <label className="config-field">
         <span>MQTT 地址</span>
         <input
           type="text"
