@@ -87,7 +87,7 @@ export function defaultConfig(): DeviceConfig {
     deviceName: '',
     macAddress: getMacAddress(),
     serverUrl: 'http://192.168.0.200:3000',
-    dataChannelUrl: 'http://192.168.0.100:9203',
+    dataChannelUrl: 'http://192.168.0.200:9203',
     mqttBroker: '192.168.0.200',
     mqttPort: 1883,
     mqttUsername: '',
