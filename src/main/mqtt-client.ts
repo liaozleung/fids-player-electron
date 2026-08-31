@@ -70,6 +70,11 @@ export class MqttService {
     return this.activeUrl()
   }
 
+  /** 覆盖层是否激活（心跳 overlayActive 上报用，服务端据此跳过对账纠偏） */
+  isOverlayActive(): boolean {
+    return this.overlayUrl != null
+  }
+
   setDisplayUrl(url: string): void {
     this.currentDisplayUrl = url
   }
@@ -196,6 +201,12 @@ export class MqttService {
             this.overlayUrl || this.currentDisplayUrl || '(空)',
           )
         } else if (cmd.url) {
+          // 幂等守卫（整改包①）：displayPage 现在带 retain，broker 重连时会重放
+          // 最后一条基础页指令；URL 未变化时跳过，避免每次重连白闪一次
+          if (cmd.url === this.currentDisplayUrl) {
+            console.log(`[mqtt:${cfg.deviceId}] displayPage URL 未变化，跳过:`, cmd.url)
+            break
+          }
           this.currentDisplayUrl = cmd.url
           if (this.persistDisplayUrl) {
             this.config.displayUrl = cmd.url
@@ -334,4 +345,8 @@ export function getDisplayUrl(): string | null {
 
 export function setDisplayUrl(url: string): void {
   defaultMqttService?.setDisplayUrl(url)
+}
+
+export function isOverlayActive(): boolean {
+  return defaultMqttService?.isOverlayActive() ?? false
 }

@@ -8,6 +8,8 @@ import * as mqttModule from './mqtt-client'
 export interface DisplayUrlSlot {
   getDisplayUrl(): string | null
   setDisplayUrl(url: string): void
+  /** 覆盖层是否激活（可选，MqttService 实现；服务端据此跳过 URL 对账纠偏） */
+  isOverlayActive?(): boolean
 }
 
 /**
@@ -85,6 +87,8 @@ export class HeartbeatService {
         message,
         ipAddress,
         currentUrl: this.slot.getDisplayUrl() || null,
+        // 整改包①：覆盖层激活时 currentUrl 是临时覆盖页，服务端跳过对账纠偏
+        overlayActive: this.slot.isOverlayActive?.() ?? false,
         sysInfo: JSON.stringify({
           cpu: sysInfo.cpuUsage,
           mem: sysInfo.memoryUsage,
@@ -184,6 +188,7 @@ export function setDefaultHeartbeatService(svc: HeartbeatService): void {
 const singletonSlot: DisplayUrlSlot = {
   getDisplayUrl: () => mqttModule.getDisplayUrl(),
   setDisplayUrl: (url: string) => mqttModule.setDisplayUrl(url),
+  isOverlayActive: () => mqttModule.isOverlayActive(),
 }
 
 export function startHeartbeat(
