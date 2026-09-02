@@ -1,0 +1,41 @@
+# Windows 安装程序自动构建（2026-09-02）
+# 触发：推送 v* 版本标签（如 v1.2.0）→ windows runner 跑 electron-builder NSIS
+# → 安装程序自动挂到该 tag 的 GitHub Release。
+# 用法：
+#   npm version patch          # 或手动改 package.json version 后 git tag v<version>
+#   git push github main --tags
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # 创建 Release 需要
+
+jobs:
+  build-win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建 NSIS 安装程序
+        run: npm run build:win
+
+      - name: 发布到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+          generate_release_notes: true
