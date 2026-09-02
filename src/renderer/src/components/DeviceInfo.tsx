@@ -56,6 +56,14 @@ export function DeviceInfo({ config, onChange }: DeviceInfoProps) {
           />
           全屏模式
         </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={config.hardwareDecode !== false}
+            onChange={(e) => update('hardwareDecode', e.target.checked)}
+          />
+          硬件视频解码（改动需重启播放端；视频卡顿开、花屏关）
+        </label>
       </div>
     </fieldset>
   )

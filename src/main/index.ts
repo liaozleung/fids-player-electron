@@ -224,6 +224,22 @@ async function syncScreensFromServer(cfg: DeviceConfig): Promise<ScreensConfigRe
   }
 }
 
+// 硬件视频解码开关（整改 2026-08-31，config.hardwareDecode，默认开）。
+// 必须在 app ready 之前 appendSwitch；Linux 下 Chromium VA-API 硬解默认关闭，
+// 视频背景页在瘦客户端上软解 CPU 50-77% 卡顿，开启后走 GPU 硬解。
+{
+  const bootConfig = loadConfig()
+  if (bootConfig.hardwareDecode === false) {
+    // 关：全平台强制软解（Windows 硬解默认开，此开关是它唯一的"关"途径；排障/花屏回退用）
+    app.commandLine.appendSwitch('disable-accelerated-video-decode')
+  } else if (process.platform === 'linux') {
+    // 开：仅 Linux 需要显式启用 VA-API（Chromium 在 Linux 默认关硬解）；
+    // Windows D3D11 硬解默认开，无需任何开关
+    app.commandLine.appendSwitch('enable-features', 'VaapiVideoDecodeLinuxGL,VaapiVideoDecoder')
+    app.commandLine.appendSwitch('ignore-gpu-blocklist')
+  }
+}
+
 app.whenReady().then(async () => {
   // 在创建任何 BrowserWindow 前移除应用级菜单（Windows 默认会自动给每个 BrowserWindow 套一份）
   Menu.setApplicationMenu(null)

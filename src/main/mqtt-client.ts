@@ -1,6 +1,6 @@
 import mqtt, { MqttClient } from 'mqtt'
-import { BrowserWindow } from 'electron'
-import { type DeviceConfig, saveConfigToDisk } from './config'
+import { app, BrowserWindow } from 'electron'
+import { type DeviceConfig, loadConfig, saveConfigToDisk } from './config'
 import * as systemControl from './system-control'
 
 /** MQTT 连接状态 */
@@ -275,6 +275,21 @@ export class MqttService {
       case 'setBrightness':
         if (cmd.value !== undefined) systemControl.setBrightness(cmd.value)
         break
+      case 'setHardwareDecode': {
+        // value: 1 开 / 0 关。Chromium 开关只能在 app ready 前生效 → 落盘后重启应用
+        if (cmd.value === undefined) break
+        const enabled = cmd.value !== 0
+        const diskConfig = loadConfig()
+        if ((diskConfig.hardwareDecode !== false) === enabled) {
+          console.log(`[mqtt:${cfg.deviceId}] 硬件解码已是目标状态(${enabled})，跳过重启`)
+          break
+        }
+        diskConfig.hardwareDecode = enabled
+        saveConfigToDisk(diskConfig)
+        console.log(`[mqtt:${cfg.deviceId}] 硬件解码 → ${enabled}，重启应用生效`)
+        setTimeout(() => { app.relaunch(); app.exit(0) }, 1500)
+        break
+      }
       case 'monitorOn':
         systemControl.monitorOn()
         break

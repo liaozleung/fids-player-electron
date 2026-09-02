@@ -20,6 +20,8 @@ export interface DeviceConfig {
   displayUrl: string | null
   autoStart: boolean
   fullscreen: boolean
+  /** 硬件视频解码（默认开；Linux VA-API，改动重启生效） */
+  hardwareDecode?: boolean
   /** 一机多屏：screens 数组非空时启用 */
   screens?: ScreenEntry[]
 }

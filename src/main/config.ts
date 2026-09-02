@@ -37,6 +37,12 @@ export interface DeviceConfig {
   heartbeatInterval: number
   displayUrl: string | null
   autoStart: boolean
+  /**
+   * 硬件视频解码（默认开）。Linux 下 Chromium 的 VA-API 硬解默认关闭，
+   * 视频背景页在瘦客户端（如 HP t640）上软解卡顿；开启后走 GPU 硬解单元。
+   * 个别老驱动 ignore-gpu-blocklist 可能花屏，届时关掉本开关。改动重启生效。
+   */
+  hardwareDecode?: boolean
   fullscreen: boolean
   /** 一机多屏（可选）：详见 ScreenEntry */
   screens?: ScreenEntry[]
@@ -95,6 +101,7 @@ export function defaultConfig(): DeviceConfig {
     heartbeatInterval: 15,
     displayUrl: null,
     autoStart: false,
+    hardwareDecode: true,
     fullscreen: false,
   }
 }
