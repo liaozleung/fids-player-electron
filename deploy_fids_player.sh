@@ -54,11 +54,16 @@ do
   # 否则部署了新版本自启动仍拉起旧目录（实测 .172 一直跑 0.1.0，0.3.6/0.4.1 历次部署全部空转）
   ssh ${REMOTE_USER}@${REMOTE_HOST} "cd ${REMOTE_DIR} && ln -sfn ${EXTRACT_DIR} current"
 
-  # 清理老版本目录（保留 current 指向的新版 + 最近一个旧版用于回退）
-  ssh ${REMOTE_USER}@${REMOTE_HOST} "cd ${REMOTE_DIR} && ls -dt fids-player-electron-*/ 2>/dev/null | tail -n +3 | xargs -r sudo rm -rf"
+  # 清理老版本目录（保留 current 指向的新版 + 版本号最高的一个旧版用于回退）。
+  # 注意：不能按 mtime（ls -t）排——tar 里目录 mtime 是 1970 epoch，排序失效会误删新版
+  #（2026-09-02 实测把刚解压的 0.5.1 删了）；按版本号 sort -V，且显式排除 current 目标。
+  ssh ${REMOTE_USER}@${REMOTE_HOST} "cd ${REMOTE_DIR} && CUR=\$(readlink current) && ls -d fids-player-electron-*/ 2>/dev/null | sed 's|/\$||' | grep -vx \"\$CUR\" | sort -V | head -n -1 | xargs -r sudo rm -rf"
 
   # 尝试自动重启（openbox 桌面会话内拉起；失败则提示手动）
-  ssh ${REMOTE_USER}@${REMOTE_HOST} "DISPLAY=:0 nohup ${REMOTE_DIR}/current/fids-player-electron --kiosk --disable-infobars >/dev/null 2>&1 & sleep 2; pgrep -f 'current/fids-player-electron' >/dev/null && echo '✅ 已自动重启（current 软链版）' || echo '⚠️ 自动重启失败，请手动启动 ${REMOTE_DIR}/current/fids-player-electron'"
+  ssh ${REMOTE_USER}@${REMOTE_HOST} "DISPLAY=:0 nohup ${REMOTE_DIR}/current/fids-player-electron --kiosk --disable-infobars > /tmp/electron.log 2>&1 &" || true
+  sleep 3
+  # 校验必须放在独立 ssh 里——与启动命令同一会话时 pgrep -f 会匹配到包装 shell 自身（假阳性）
+  ssh ${REMOTE_USER}@${REMOTE_HOST} "pgrep -f 'current/fids-player-electron' >/dev/null && echo '✅ 已自动重启（current 软链版）' || echo '⚠️ 自动重启失败，请手动启动 ${REMOTE_DIR}/current/fids-player-electron，日志看 /tmp/electron.log'"
   echo "======================================"
 done
 
