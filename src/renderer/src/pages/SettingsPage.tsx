@@ -4,7 +4,7 @@ import { DeviceInfo } from '../components/DeviceInfo'
 import { ScreensConfig } from '../components/ScreensConfig'
 import { StatusBar } from '../components/StatusBar'
 import { LogViewer } from '../components/LogViewer'
-import type { DeviceConfig, MqttStatus, MqttCommand } from '../types'
+import type { DeviceConfig, DeviceStatus, MqttStatus, MqttCommand } from '../types'
 
 interface SettingsPageProps {
   mqttStatus: MqttStatus
@@ -21,6 +21,7 @@ export function SettingsPage({
   const [saving, setSaving] = useState(false)
   const [registering, setRegistering] = useState(false)
   const [serverReachable, setServerReachable] = useState(false)
+  const [runtimeInfo, setRuntimeInfo] = useState<{ localIp?: string; appVersion?: string }>({})
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [commandLog, setCommandLog] = useState<MqttCommand[]>([])
 
@@ -32,17 +33,17 @@ export function SettingsPage({
   // 检查服务器连通性
   useEffect(() => {
     if (!config) return
-    window.electronAPI
-      .getStatus()
-      .then((status: { serverReachable: boolean }) => setServerReachable(status.serverReachable))
-      .catch(() => setServerReachable(false))
-
-    const interval = setInterval(() => {
+    const pull = () => {
       window.electronAPI
         .getStatus()
-        .then((status: { serverReachable: boolean }) => setServerReachable(status.serverReachable))
+        .then((status: DeviceStatus) => {
+          setServerReachable(status.serverReachable)
+          setRuntimeInfo({ localIp: status.localIp, appVersion: status.appVersion })
+        })
         .catch(() => setServerReachable(false))
-    }, 10000)
+    }
+    pull()
+    const interval = setInterval(pull, 10000)
 
     return () => clearInterval(interval)
   }, [config])
@@ -98,6 +99,9 @@ export function SettingsPage({
     <div className="settings-page">
       <header className="settings-header">
         <h1>FIDS Player 设置</h1>
+        <div className="runtime-info" style={{ fontSize: 12, opacity: 0.75, margin: '2px 0 4px' }}>
+          本机 IP: {runtimeInfo.localIp || '获取中...'} · 版本: v{runtimeInfo.appVersion || '?'}
+        </div>
         <StatusBar mqttStatus={mqttStatus} serverReachable={serverReachable} />
       </header>
 

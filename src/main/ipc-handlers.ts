@@ -67,6 +67,8 @@ export function initIpcHandlers(initialConfig: DeviceConfig): void {
       mqttConnected: false, // 由前端通过事件跟踪
       serverReachable,
       displayUrl,
+      localIp: await getLocalIpAddress(),
+      appVersion: app.getVersion(),
       cpuUsage: sysInfo.cpuUsage,
       memoryUsage: sysInfo.memoryUsage,
       diskUsage: sysInfo.diskUsage,

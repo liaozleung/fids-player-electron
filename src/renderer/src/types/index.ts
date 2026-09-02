@@ -31,6 +31,10 @@ export interface DeviceStatus {
   mqttConnected: boolean
   serverReachable: boolean
   displayUrl: string | null
+  /** 本机 IP（设置界面展示） */
+  localIp?: string
+  /** 播放端版本号（app.getVersion，打包后为 package.json version） */
+  appVersion?: string
   cpuUsage: number
   memoryUsage: number
   diskUsage: number
