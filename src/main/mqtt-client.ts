@@ -1,6 +1,7 @@
 import mqtt, { MqttClient } from 'mqtt'
 import { app, BrowserWindow } from 'electron'
 import { type DeviceConfig, loadConfig, saveConfigToDisk } from './config'
+import { loadCaSync, fetchAndCacheCa } from './mqtt-ca'
 import * as systemControl from './system-control'
 
 /** MQTT 连接状态 */
@@ -114,7 +115,9 @@ export class MqttService {
       return
     }
 
-    const brokerUrl = `mqtt://${cfg.mqttBroker}:${cfg.mqttPort}`
+    // R03/v4：端口 8883 即启用 TLS（CA 从 fids /uploads/fids-ca.crt 自取并本地缓存）
+    const useTls = Number(cfg.mqttPort) === 8883
+    const brokerUrl = `${useTls ? 'mqtts' : 'mqtt'}://${cfg.mqttBroker}:${cfg.mqttPort}`
     // clientId 含 deviceId + 进程 pid，避免同主机多实例冲突
     const clientId = `fids-player-electron-${cfg.deviceId}-${process.pid}`
 
@@ -126,6 +129,18 @@ export class MqttService {
       keepalive: 30,
       reconnectPeriod: 0,
       connectTimeout: 10000,
+    }
+    if (useTls) {
+      const ca = loadCaSync()
+      if (!ca) {
+        console.log(`[mqtt:${cfg.deviceId}] TLS 模式但本地无 CA，先下载再重连...`)
+        void fetchAndCacheCa(cfg.serverUrl).finally(() => {
+          this.retryTimer = setTimeout(() => this.connect(), 3000)
+        })
+        return
+      }
+      options.ca = ca
+      options.rejectUnauthorized = true
     }
     if (cfg.mqttUsername) {
       options.username = cfg.mqttUsername

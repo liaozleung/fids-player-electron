@@ -104,6 +104,22 @@ export function initIpcHandlers(initialConfig: DeviceConfig): void {
     if (resp.ok) {
       const body = await resp.text()
       console.log('设备注册成功:', body)
+      // R03：首次注册若返回一机一凭据，自动落盘并切到 TLS 口（密码仅此一次，必须当场保存）
+      try {
+        const parsed = JSON.parse(body) as {
+          data?: { mqttCredentials?: { username: string; password: string; tlsPort: number } | null }
+        }
+        const cred = parsed?.data?.mqttCredentials
+        if (cred?.username && cred?.password) {
+          runtimeConfig.mqttUsername = cred.username
+          runtimeConfig.mqttPassword = cred.password
+          runtimeConfig.mqttPort = cred.tlsPort || 8883
+          saveConfigToDisk(runtimeConfig)
+          console.log(`[register] 已保存一机一 MQTT 凭据 ${cred.username}，切换 TLS 端口 ${runtimeConfig.mqttPort}`)
+        }
+      } catch {
+        /* 响应无凭据字段则维持现有配置 */
+      }
       return body
     } else {
       const body = await resp.text()
