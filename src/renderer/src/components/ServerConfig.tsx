@@ -49,7 +49,7 @@ export function ServerConfig({ config, onChange }: ServerConfigProps) {
         <input
           type="number"
           value={config.mqttPort}
-          onChange={(e) => update('mqttPort', parseInt(e.target.value) || 1883)}
+          onChange={(e) => update('mqttPort', parseInt(e.target.value) || 8883)}
           min={1}
           max={65535}
         />
