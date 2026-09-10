@@ -103,7 +103,8 @@ export function initIpcHandlers(initialConfig: DeviceConfig): void {
 
     if (resp.ok) {
       const body = await resp.text()
-      console.log('设备注册成功:', body)
+      // R20（2026-09-10）：注册响应可能带一机一 MQTT 凭据，日志里脱敏，别把密码写进设备日志文件
+      console.log('设备注册成功:', body.replace(/("password"\s*:\s*")[^"]*(")/g, '$1***$2'))
       // R03：首次注册若返回一机一凭据，自动落盘并切到 TLS 口（密码仅此一次，必须当场保存）
       try {
         const parsed = JSON.parse(body) as {
