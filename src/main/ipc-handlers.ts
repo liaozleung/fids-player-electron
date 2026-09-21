@@ -90,7 +90,8 @@ export function initIpcHandlers(initialConfig: DeviceConfig): void {
       macAddress: runtimeConfig.macAddress,
       ipAddress,
       deviceType: 'fids_player',
-      softwareVersion: `electron-v${process.env.npm_package_version || '0.1.0'}`,
+      // 打包后 npm_package_version 为空一直上报 0.1.0（2026-09-21 修）：改用 app.getVersion()（读 package.json version）
+      softwareVersion: `electron-v${app.getVersion()}`,
       status: 'online',
     }
 
