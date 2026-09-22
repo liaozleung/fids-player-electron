@@ -10,7 +10,7 @@
     3. 删除旧安装目录（Program Files\FIDS Player、%LOCALAPPDATA%\Programs\FIDS Player）
     4. 从 fids 服务器取最新 Windows 包（或 -Version 指定）+ manifest，核对 SHA-256
     5. 解压到 C:\fids-player\fids-player-electron-<版本>\，建目录联接 C:\fids-player\current
-    6. 启动文件夹放快捷方式（指向 current\FIDS Player.exe --kiosk --disable-infobars）
+    6. 注册计划任务 "FIDS Player"（onlogon、交互会话；ssh 远程也能 schtasks /run 拉起）
     7. -MqttUser/-MqttPass 给了就写入 %USERPROFILE%\.fids_player\config.json（端口 8883）
     8. 启动新版
 
@@ -117,14 +117,13 @@ if (Test-Path $cur) { cmd /c rmdir "$cur" | Out-Null }
 cmd /c mklink /J "$cur" "$verDir" | Out-Null
 Ok "current -> $verDir"
 
-Step "6/8 启动文件夹快捷方式"
-$lnk = Join-Path ([Environment]::GetFolderPath("Startup")) "FIDS Player.lnk"
-$sc = $shell.CreateShortcut($lnk)
-$sc.TargetPath = Join-Path $cur "FIDS Player.exe"
-$sc.Arguments = "--kiosk --disable-infobars"
-$sc.WorkingDirectory = $cur
-$sc.Save()
-Ok "$lnk"
+Step "6/8 自启动：计划任务 'FIDS Player'（登录即启，交互式桌面会话；ssh 里可用 schtasks /run 远程拉起）"
+$exe = Join-Path $cur "FIDS Player.exe"
+$user = "$env:USERDOMAIN\$env:USERNAME"
+schtasks /delete /tn "FIDS Player" /f 2>$null | Out-Null
+schtasks /create /tn "FIDS Player" /tr "`"$exe`" --kiosk --disable-infobars" /sc onlogon /ru "$user" /rl highest /f | Out-Null
+# 启动文件夹里旧的快捷方式已在第 2 步清掉；不再放快捷方式，避免双启
+Ok "schtasks 'FIDS Player' → $exe（onlogon，用户 $user）"
 
 Step "7/8 MQTT 凭据"
 $cfgPath = Join-Path $env:USERPROFILE ".fids_player\config.json"
@@ -142,7 +141,8 @@ if ($MqttUser) {
 Step "8/8 启动"
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 if (-not $NoStart) {
-  Start-Process -FilePath (Join-Path $cur "FIDS Player.exe") -ArgumentList "--kiosk","--disable-infobars" -WorkingDirectory $cur
-  Ok "已启动 $Version；日志 $env:USERPROFILE\.fids_player\logs\player.log"
+  # 经计划任务拉起：无论本脚本跑在控制台还是 ssh 会话，窗口都出现在登录用户的桌面上
+  schtasks /run /tn "FIDS Player" | Out-Null
+  Ok "已经由计划任务启动 $Version；日志 $env:USERPROFILE\.fids_player\logs\player.log"
 }
 Write-Host "`n完成。以后升级由管理端 OTA 下发，无需再到现场。" -ForegroundColor Green
