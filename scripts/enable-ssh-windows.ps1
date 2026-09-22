@@ -59,8 +59,10 @@ if (-not $installed) {
 Step "2/4 启动 sshd + 防火墙"
 Set-Service -Name sshd -StartupType Automatic
 Start-Service sshd
-if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
-  New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -DisplayName "OpenSSH Server (sshd)" -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
+# 精简/老版本 Windows 没有 NetSecurity 模块（Get-NetFirewallRule 不存在）→ 一律用 netsh，幂等
+$rule = netsh advfirewall firewall show rule name="OpenSSH Server (sshd)" 2>$null
+if (-not ($rule -match "OpenSSH Server")) {
+  netsh advfirewall firewall add rule name="OpenSSH Server (sshd)" dir=in action=allow protocol=TCP localport=22 | Out-Null
 }
 Ok "sshd 运行中：$((Get-Service sshd).Status)，22 端口已放行"
 
@@ -79,5 +81,6 @@ icacls $authFile /grant "SYSTEM:(F)" "BUILTIN\Administrators:(F)" | Out-Null
 Restart-Service sshd
 Ok "$authFile 已写入公钥并收紧 ACL"
 
-$ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254*" } | Select-Object -First 1).IPAddress
+$ip = ([System.Net.Dns]::GetHostAddresses($env:COMPUTERNAME) | Where-Object { $_.AddressFamily -eq "InterNetwork" -and $_.ToString() -notlike "127.*" -and $_.ToString() -notlike "169.254*" } | Select-Object -First 1).IPAddressToString
+if (-not $ip) { $ip = "<本机IP>" }
 Write-Host "`n完成。运维侧：ssh $env:USERNAME@$ip" -ForegroundColor Green
