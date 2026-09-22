@@ -120,8 +120,10 @@ Ok "current -> $verDir"
 Step "6/8 自启动：计划任务 'FIDS Player'（登录即启，交互式桌面会话；ssh 里可用 schtasks /run 远程拉起）"
 $exe = Join-Path $cur "FIDS Player.exe"
 $user = "$env:USERDOMAIN\$env:USERNAME"
-schtasks /delete /tn "FIDS Player" /f 2>$null | Out-Null
-schtasks /create /tn "FIDS Player" /tr "`"$exe`" --kiosk --disable-infobars" /sc onlogon /ru "$user" /rl highest /f | Out-Null
+# 原生命令的 stderr 在 ErrorActionPreference=Stop 下会变成终止错误 → 经 cmd /c 吞掉并用退出码判断
+cmd /c "schtasks /delete /tn ""FIDS Player"" /f >nul 2>&1"
+cmd /c "schtasks /create /tn ""FIDS Player"" /tr ""\""$exe\"" --kiosk --disable-infobars"" /sc onlogon /ru ""$user"" /rl highest /f >nul 2>&1"
+if ($LASTEXITCODE -ne 0) { throw "schtasks /create 失败（退出码 $LASTEXITCODE）" }
 # 启动文件夹里旧的快捷方式已在第 2 步清掉；不再放快捷方式，避免双启
 Ok "schtasks 'FIDS Player' → $exe（onlogon，用户 $user）"
 
@@ -142,7 +144,8 @@ Step "8/8 启动"
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 if (-not $NoStart) {
   # 经计划任务拉起：无论本脚本跑在控制台还是 ssh 会话，窗口都出现在登录用户的桌面上
-  schtasks /run /tn "FIDS Player" | Out-Null
+  cmd /c "schtasks /run /tn ""FIDS Player"" >nul 2>&1"
+  if ($LASTEXITCODE -ne 0) { Warn "schtasks /run 退出码 $LASTEXITCODE，请到设备桌面手动双击 $cur\FIDS Player.exe" }
   Ok "已经由计划任务启动 $Version；日志 $env:USERPROFILE\.fids_player\logs\player.log"
 }
 Write-Host "`n完成。以后升级由管理端 OTA 下发，无需再到现场。" -ForegroundColor Green
