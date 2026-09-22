@@ -31,6 +31,7 @@
     }
   },
   "dependencies": {
+    "extract-zip": "^2.0.1",
     "mqtt": "^5.10.0",
     "systeminformation": "^5.23.0"
   },

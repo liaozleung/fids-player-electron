@@ -9,6 +9,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { configDir, type DeviceConfig } from './config'
 import { verifyUpdatePackage } from './ota-verify'
+import extractZip from 'extract-zip'
 
 const execFileAsync = promisify(execFile)
 
@@ -94,19 +95,27 @@ async function download(url: string, dest: string, maxBytes: number): Promise<vo
   if (statSync(dest).size > maxBytes) throw new Error('包过大')
 }
 
-/** 解压到 staging：tar.gz 有顶层目录 strip 1；zip（Windows 10+ 自带 bsdtar 支持）无顶层目录 */
+/** 解压到 staging：tar.gz 有顶层目录 strip 1（Linux）；zip 用进程内 extract-zip（不依赖 tar.exe / PowerShell，hp001 实测两者都不可靠） */
 async function extract(pkgPath: string, stagingDir: string): Promise<void> {
   if (pkgPath.endsWith('.zip')) {
-    // 精简版 Win10 可能没有 System32\tar.exe（hp001 实测）→ 回落 PowerShell Expand-Archive
-    try {
-      await execFileAsync('tar', ['-xf', pkgPath, '-C', stagingDir])
-    } catch (e) {
-      console.warn('[ota] tar 不可用，改用 Expand-Archive:', (e as Error).message)
-      await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-        `Expand-Archive -LiteralPath '${pkgPath.replace(/'/g, "''")}' -DestinationPath '${stagingDir.replace(/'/g, "''")}' -Force`])
-    }
+    await withTimeout(extractZip(pkgPath, { dir: stagingDir }), 10 * 60_000, 'zip 解压')
   } else {
-    await execFileAsync('tar', ['-xzf', pkgPath, '-C', stagingDir, '--strip-components=1'])
+    await withTimeout(execFileAsync('tar', ['-xzf', pkgPath, '-C', stagingDir, '--strip-components=1']), 10 * 60_000, 'tar 解压')
+  }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} 超时（${Math.round(ms / 1000)}s）`)), ms)
+    p.then((v) => { clearTimeout(t); resolve(v) }, (e) => { clearTimeout(t); reject(e) })
+  })
+}
+
+/** Windows 上刚写完/被扫描的文件删目录会 EBUSY/ENOTEMPTY，重试几次 */
+async function rmDirRetry(dir: string, tries = 5): Promise<void> {
+  for (let i = 0; i < tries; i++) {
+    try { rmSync(dir, { recursive: true, force: true }); if (!existsSync(dir)) return } catch { /* retry */ }
+    await new Promise((r) => setTimeout(r, 500 * (i + 1)))
   }
 }
 
@@ -167,7 +176,7 @@ export async function runUpdate(cfg: DeviceConfig, cmd: UpdateCommand): Promise<
     if (cmd.sha256 && cmd.sha256 !== vr.manifest.sha256) throw new Error('指令哈希与 manifest 不一致')
 
     await report(cfg, v, 'installing', targetDir)
-    rmSync(stagingDir, { recursive: true, force: true })
+    await rmDirRetry(stagingDir)
     mkdirSync(stagingDir, { recursive: true })
     await extract(pkgPath, stagingDir)
     // 完整性：可执行文件 + Electron 运行时必需文件（构建机 Electron 缓存损坏会产出残缺包，hp001 实测 icudtl.dat 缺失启动即退）
@@ -182,7 +191,7 @@ export async function runUpdate(cfg: DeviceConfig, cmd: UpdateCommand): Promise<
         throw new Error(`设置 chrome-sandbox 权限失败（需要免密 sudo）：${(e as Error).message}`)
       }
     }
-    rmSync(targetDir, { recursive: true, force: true })
+    await rmDirRetry(targetDir)
     await rename(stagingDir, targetDir)
     const cur = await switchCurrent(root, versionDirName)
     // 清理：只留 current 指向的新版 + 版本号最高的一个旧版（当前正在运行的这个不删，留作回滚）
@@ -201,8 +210,9 @@ export async function runUpdate(cfg: DeviceConfig, cmd: UpdateCommand): Promise<
     child.unref()
     setTimeout(() => app.exit(0), 800)
   } catch (e) {
-    rmSync(stagingDir, { recursive: true, force: true })
-    await report(cfg, v, 'failed', (e as Error).message)
+    // 清理本身不能再抛（Windows 上 rmdir ENOTEMPTY 曾把异常抛出 runUpdate → unhandledRejection，状态卡在 installing、inFlight 永远 true）
+    try { await rmDirRetry(stagingDir) } catch { /* ignore */ }
+    try { await report(cfg, v, 'failed', (e as Error)?.message || String(e)) } catch { /* ignore */ }
     inFlight = false
   }
 }
