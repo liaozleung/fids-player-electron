@@ -138,7 +138,8 @@ if ($MqttUser) {
     Copy-Item $cfgPath "$cfgPath.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
     $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
     $cfg.mqttPort = $MqttPort; $cfg.mqttUsername = $MqttUser; $cfg.mqttPassword = $MqttPass
-    $cfg | ConvertTo-Json -Depth 8 | Set-Content -Path $cfgPath -Encoding UTF8
+    # PS 5.1 的 Set-Content -Encoding UTF8 会带 BOM，播放器 JSON.parse 会炸（hp001 实测）→ 无 BOM 写入
+    [IO.File]::WriteAllText($cfgPath, ($cfg | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding $false))
     Ok "已写入 port=$MqttPort user=$MqttUser（旧配置已备份）"
   }
 } else { Warn "未提供 -MqttUser：启动后按 Esc 进配置页填 8883 + 账密" }
