@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { spawn } from 'node:child_process'
-import { createWriteStream, existsSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, readlinkSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { readdir, rename, rm, rmdir, symlink, unlink } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -51,6 +51,10 @@ export function installLayout(): { root: string; versionDir: string; exeName: st
   // Linux 则由 /proc/self/exe 自动解析软链；统一 realpath 得到真实版本目录（hp001 实测误判"非目录制"）
   let exe = process.execPath
   try { exe = realpathSync.native ? realpathSync.native(exe) : realpathSync(exe) } catch { /* 保持原值 */ }
+  // 双保险：仍落在 current/ 下（realpath 未解析联接）→ 直接读联接目标
+  if (basename(dirname(exe)).toLowerCase() === 'current') {
+    try { exe = join(readlinkSync(dirname(exe)), basename(exe)) } catch { /* 保持原值 */ }
+  }
   const versionDir = dirname(exe)
   const root = resolve(versionDir, '..')
   const ok = app.isPackaged && /^fids-player-electron-\d/.test(basename(versionDir))

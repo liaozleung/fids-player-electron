@@ -14,7 +14,8 @@
     "build:linux:deb": "npm run build && electron-builder --linux deb --x64 --publish never",
     "build:linux:appimage": "npm run build && electron-builder --linux AppImage --x64 --publish never",
     "build:linux:all": "npm run build && electron-builder --linux --x64 --publish never",
-    "build:mac": "npm run build && electron-builder --mac --publish never"
+    "build:mac": "npm run build && electron-builder --mac --publish never",
+    "build:win:zip": "npm run build && electron-builder --win zip --x64 --publish never"
   },
   "build": {
     "publish": null,
