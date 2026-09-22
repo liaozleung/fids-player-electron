@@ -184,23 +184,24 @@ export async function runUpdate(cfg: DeviceConfig, cmd: UpdateCommand): Promise<
     if (cmd.sha256 && cmd.sha256 !== vr.manifest.sha256) throw new Error('指令哈希与 manifest 不一致')
 
     await report(cfg, v, 'installing', targetDir)
+    // 直接解压进目标目录，不再 staging→rename：Windows 上刚解出的大文件（Defender 扫描）会让目录 rename EPERM（hp001 实测）；
+    // 原子性由后面"切 current"保证，目标目录残缺时完整性校验会拦住
     await rmDirRetry(stagingDir)
-    mkdirSync(stagingDir, { recursive: true })
-    await extract(pkgPath, stagingDir)
+    await rmDirRetry(targetDir)
+    mkdirSync(targetDir, { recursive: true })
+    await extract(pkgPath, targetDir)
     // 完整性：可执行文件 + Electron 运行时必需文件（构建机 Electron 缓存损坏会产出残缺包，hp001 实测 icudtl.dat 缺失启动即退）
     const must = [exeName, join('resources', 'app.asar'), ...(IS_WIN ? ['icudtl.dat', 'v8_context_snapshot.bin', 'chrome_100_percent.pak'] : ['icudtl.dat', 'v8_context_snapshot.bin', 'chrome-sandbox'])]
-    for (const f of must) if (!existsSync(join(stagingDir, f))) throw new Error(`包不完整：缺少 ${f}`)
+    for (const f of must) if (!existsSync(join(targetDir, f))) throw new Error(`包不完整：缺少 ${f}`)
     if (!IS_WIN) {
       // chrome-sandbox 需 root:root 4755，否则 Electron 拒绝启动；无免密 sudo 则失败（部署时配置 NOPASSWD）
       try {
-        await execFileAsync('sudo', ['-n', 'chown', 'root:root', join(stagingDir, 'chrome-sandbox')])
-        await execFileAsync('sudo', ['-n', 'chmod', '4755', join(stagingDir, 'chrome-sandbox')])
+        await execFileAsync('sudo', ['-n', 'chown', 'root:root', join(targetDir, 'chrome-sandbox')])
+        await execFileAsync('sudo', ['-n', 'chmod', '4755', join(targetDir, 'chrome-sandbox')])
       } catch (e) {
         throw new Error(`设置 chrome-sandbox 权限失败（需要免密 sudo）：${(e as Error).message}`)
       }
     }
-    await rmDirRetry(targetDir)
-    await rename(stagingDir, targetDir)
     const cur = await switchCurrent(root, versionDirName)
     // 清理：只留 current 指向的新版 + 版本号最高的一个旧版（当前正在运行的这个不删，留作回滚）
     try {
@@ -221,7 +222,7 @@ export async function runUpdate(cfg: DeviceConfig, cmd: UpdateCommand): Promise<
     setTimeout(() => app.exit(0), 800)
   } catch (e) {
     // 清理本身不能再抛（Windows 上 rmdir ENOTEMPTY 曾把异常抛出 runUpdate → unhandledRejection，状态卡在 installing、inFlight 永远 true）
-    try { await rmDirRetry(stagingDir) } catch { /* ignore */ }
+    try { await rmDirRetry(stagingDir); if (!existsSync(join(root, 'current')) || realpathSync(join(root, 'current')) !== targetDir) await rmDirRetry(targetDir) } catch { /* ignore */ }
     try { await report(cfg, v, 'failed', (e as Error)?.message || String(e)) } catch { /* ignore */ }
     inFlight = false
   }
