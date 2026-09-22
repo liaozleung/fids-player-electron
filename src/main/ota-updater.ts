@@ -132,7 +132,12 @@ export async function runUpdate(cfg: DeviceConfig, cmd: UpdateCommand): Promise<
     try {
       const dirs = (await readdir(root)).filter((d) => /^fids-player-electron-\d/.test(d) && d !== `fids-player-electron-${v}`)
       dirs.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-      for (const d of dirs.slice(0, -1)) await rm(join(root, d), { recursive: true, force: true })
+      for (const d of dirs.slice(0, -1)) {
+        const full = join(root, d)
+        // 目录内 chrome-sandbox 为 root 属主，某些环境下普通用户 rm 失败 → sudo -n 兜底（0.7.1 实测 0.6.0 未清）
+        await rm(full, { recursive: true, force: true }).catch(() => execFileAsync('sudo', ['-n', 'rm', '-rf', full]))
+        if (existsSync(full)) await execFileAsync('sudo', ['-n', 'rm', '-rf', full]).catch(() => {})
+      }
     } catch { /* 清理失败不影响更新 */ }
     await rm(work, { recursive: true, force: true }).catch(() => {})
 
