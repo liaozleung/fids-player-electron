@@ -1,8 +1,8 @@
 import { app } from 'electron'
 import { spawn } from 'node:child_process'
 import { createWriteStream, existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
-import { readdir, rename, rm, symlink, unlink } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { readdir, rename, rm, rmdir, symlink, unlink } from 'node:fs/promises'
+import { basename, dirname, join, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
 import { execFile } from 'node:child_process'
@@ -13,21 +13,24 @@ import { verifyUpdatePackage } from './ota-verify'
 const execFileAsync = promisify(execFile)
 
 /**
- * 终端 OTA（2026-09-22，Linux x64 tar.gz 形态）
+ * 终端 OTA（2026-09-22 Linux tar.gz；2026-09-22 晚增 Windows zip，目录制同构）
  *
- * 触发：MQTT `update` 指令 { version, url, manifestUrl, sha256, size }
- * 流程：校验来源 → 下载包 + manifest 到 ~/.fids_player/ota/<version>/ → 本地 sha256 + ed25519 验签（fail-closed）
- *      → 解压到 <安装根>/fids-player-electron-<version>/ → chrome-sandbox 权限（sudo -n）→ 原子切 current 软链
- *      → 回报 restarting → 以 current 路径拉起新进程 → 退出。每步向 fids /api/devices/update-status 回报。
- * 安装根 = 当前可执行文件所在目录的上一级（/opt/fids-player/fids-player-electron-0.6.1/fids-player-electron → /opt/fids-player），
- * 与 deploy_fids_player.sh 的目录约定一致；自启动入口应指向 <安装根>/current。
- * 回滚：ln -sfn <旧版本目录> current 后重启（旧目录保留一份）。
- * 来源限制：url / manifestUrl 必须与 serverUrl 同源（防止被诱导从任意地址下载；即便下载了，验签也过不了）。
+ * 触发：MQTT `update` 指令 { version, platform, url, manifestUrl, sha256, size }
+ * 布局（两平台一致，自启动指向 current）：
+ *   Linux   /opt/fids-player/fids-player-electron-<v>/fids-player-electron   + current 软链
+ *   Windows C:\fids-player\fids-player-electron-<v>\FIDS Player.exe          + current 目录联接（junction，无需管理员）
+ * 流程：平台/来源校验 → 下载包 + manifest 到 ~/.fids_player/ota/<v>/ → 本地 size/sha256/ed25519 三核（fail-closed）
+ *      → 解压到 staging（Linux tar.gz strip 1 层；Windows zip 用系统自带 tar 解，无顶层目录）→ Linux 设 chrome-sandbox 4755（sudo -n）
+ *      → 切 current → 清旧版只留一份 → 回报 restarting → 以 current 路径拉起新进程 → 退出。
+ * 新进程启动时若带 FIDS_OTA_JUST_UPDATED，按真实 app.getVersion() 回报 success / failed。
+ * 前置：必须运行在 fids-player-electron-<v>/ 目录制布局里（安装器版 / 任意目录解压版拒绝 OTA，提示用引导脚本重装）。
+ * 回滚：把 current 指回旧版本目录后重启（Windows：rmdir current && mklink /J current <旧目录>）。
  */
 export interface UpdateCommand {
   version: string
   url: string
   manifestUrl: string
+  platform?: string
   sha256?: string
   size?: number
 }
@@ -35,14 +38,20 @@ export interface UpdateCommand {
 type Status = 'downloading' | 'verifying' | 'installing' | 'restarting' | 'success' | 'failed'
 
 let inFlight = false
+const IS_WIN = process.platform === 'win32'
 
-export function installRoot(): string {
-  // dev 模式（electron-vite dev）execPath 指向 node_modules 里的 Electron，不允许 OTA
-  return resolve(dirname(process.execPath), '..')
+/** 本机对应的发布包平台标识（与 fids RELEASE_PLATFORMS 一致） */
+export function localPlatformKey(): string {
+  return `electron-${IS_WIN ? 'win' : 'linux'}-x64`
 }
 
-export function isPackagedLinux(): boolean {
-  return app.isPackaged && process.platform === 'linux'
+/** 当前可执行文件所在的版本目录（fids-player-electron-<v>）与安装根 */
+export function installLayout(): { root: string; versionDir: string; exeName: string; ok: boolean } {
+  const exe = process.execPath
+  const versionDir = dirname(exe)
+  const root = resolve(versionDir, '..')
+  const ok = app.isPackaged && /^fids-player-electron-\d/.test(basename(versionDir))
+  return { root, versionDir, exeName: basename(exe), ok }
 }
 
 function sameOrigin(a: string, b: string): boolean {
@@ -78,26 +87,63 @@ async function download(url: string, dest: string, maxBytes: number): Promise<vo
   if (statSync(dest).size > maxBytes) throw new Error('包过大')
 }
 
+/** 解压到 staging：tar.gz 有顶层目录 strip 1；zip（Windows 10+ 自带 bsdtar 支持）无顶层目录 */
+async function extract(pkgPath: string, stagingDir: string): Promise<void> {
+  if (pkgPath.endsWith('.zip')) {
+    await execFileAsync('tar', ['-xf', pkgPath, '-C', stagingDir])
+  } else {
+    await execFileAsync('tar', ['-xzf', pkgPath, '-C', stagingDir, '--strip-components=1'])
+  }
+}
+
+/** 切 current：Linux 临时软链 rename 原子覆盖；Windows 目录联接（先删旧联接再建，联接删除不影响目标目录） */
+async function switchCurrent(root: string, versionDirName: string): Promise<string> {
+  const cur = join(root, 'current')
+  if (IS_WIN) {
+    if (existsSync(cur)) await rmdir(cur).catch(async () => { await unlink(cur) })
+    await symlink(join(root, versionDirName), cur, 'junction')
+  } else {
+    const tmpLink = join(root, `.current.${process.pid}`)
+    await unlink(tmpLink).catch(() => {})
+    await symlink(versionDirName, tmpLink)
+    await rename(tmpLink, cur)
+  }
+  return cur
+}
+
+async function removeDir(full: string): Promise<void> {
+  await rm(full, { recursive: true, force: true }).catch(() => {})
+  if (existsSync(full) && !IS_WIN) await execFileAsync('sudo', ['-n', 'rm', '-rf', full]).catch(() => {})
+}
+
 export async function runUpdate(cfg: DeviceConfig, cmd: UpdateCommand): Promise<void> {
   const v = String(cmd.version || '').trim()
   if (inFlight) { console.warn('[ota] 已有更新在进行，忽略'); return }
   if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(v)) { await report(cfg, v || '?', 'failed', '版本号非法'); return }
   if (v === app.getVersion()) { await report(cfg, v, 'success', '已是该版本'); return }
-  if (!isPackagedLinux()) { await report(cfg, v, 'failed', `当前形态不支持自更新（packaged=${app.isPackaged} platform=${process.platform}）`); return }
+  if (cmd.platform && cmd.platform !== localPlatformKey()) {
+    await report(cfg, v, 'failed', `包平台 ${cmd.platform} 与本机 ${localPlatformKey()} 不符，拒绝`); return
+  }
+  const layout = installLayout()
+  if (!layout.ok) {
+    await report(cfg, v, 'failed', `非目录制安装（${app.isPackaged ? layout.versionDir : 'dev 模式'}），请用引导脚本重装后再 OTA`); return
+  }
   if (!sameOrigin(cmd.url, cfg.serverUrl) || !sameOrigin(cmd.manifestUrl, cfg.serverUrl)) {
     await report(cfg, v, 'failed', '下载地址与 serverUrl 不同源，拒绝'); return
   }
 
   inFlight = true
-  const root = installRoot()
+  const { root, exeName } = layout
+  const ext = cmd.url.endsWith('.zip') ? 'zip' : 'tar.gz'
   const work = join(configDir(), 'ota', v)
-  const pkgPath = join(work, `fids-player-electron-${v}.tar.gz`)
+  const pkgPath = join(work, `fids-player-electron-${v}.${ext}`)
   const manPath = `${pkgPath}.manifest.json`
-  const targetDir = join(root, `fids-player-electron-${v}`)
+  const versionDirName = `fids-player-electron-${v}`
+  const targetDir = join(root, versionDirName)
   const stagingDir = `${targetDir}.staging`
   try {
     mkdirSync(work, { recursive: true })
-    await report(cfg, v, 'downloading', `${cmd.url}`)
+    await report(cfg, v, 'downloading', cmd.url)
     await download(cmd.manifestUrl, manPath, 64 * 1024)
     await download(cmd.url, pkgPath, 512 * 1024 * 1024)
 
@@ -109,42 +155,32 @@ export async function runUpdate(cfg: DeviceConfig, cmd: UpdateCommand): Promise<
     await report(cfg, v, 'installing', targetDir)
     rmSync(stagingDir, { recursive: true, force: true })
     mkdirSync(stagingDir, { recursive: true })
-    // 包内顶层目录为 fids-player-electron-<v>/（electron-builder tar.gz 约定）→ strip 1 层
-    await execFileAsync('tar', ['-xzf', pkgPath, '-C', stagingDir, '--strip-components=1'])
-    const bin = join(stagingDir, 'fids-player-electron')
-    if (!existsSync(bin)) throw new Error('包内缺少 fids-player-electron 可执行文件')
-    // chrome-sandbox 需 root:root 4755，否则 Electron 拒绝启动；无免密 sudo 则失败（部署时配置 NOPASSWD）
-    try {
-      await execFileAsync('sudo', ['-n', 'chown', 'root:root', join(stagingDir, 'chrome-sandbox')])
-      await execFileAsync('sudo', ['-n', 'chmod', '4755', join(stagingDir, 'chrome-sandbox')])
-    } catch (e) {
-      throw new Error(`设置 chrome-sandbox 权限失败（需要免密 sudo）：${(e as Error).message}`)
+    await extract(pkgPath, stagingDir)
+    if (!existsSync(join(stagingDir, exeName))) throw new Error(`包内缺少可执行文件 ${exeName}`)
+    if (!IS_WIN) {
+      // chrome-sandbox 需 root:root 4755，否则 Electron 拒绝启动；无免密 sudo 则失败（部署时配置 NOPASSWD）
+      try {
+        await execFileAsync('sudo', ['-n', 'chown', 'root:root', join(stagingDir, 'chrome-sandbox')])
+        await execFileAsync('sudo', ['-n', 'chmod', '4755', join(stagingDir, 'chrome-sandbox')])
+      } catch (e) {
+        throw new Error(`设置 chrome-sandbox 权限失败（需要免密 sudo）：${(e as Error).message}`)
+      }
     }
     rmSync(targetDir, { recursive: true, force: true })
     await rename(stagingDir, targetDir)
-    // 原子切换 current：先建临时链再 rename 覆盖
-    const cur = join(root, 'current')
-    const tmpLink = join(root, `.current.${process.pid}`)
-    await unlink(tmpLink).catch(() => {})
-    await symlink(`fids-player-electron-${v}`, tmpLink)
-    await rename(tmpLink, cur)
-    // 清理：只留 current 指向的新版 + 版本号最高的一个旧版
+    const cur = await switchCurrent(root, versionDirName)
+    // 清理：只留 current 指向的新版 + 版本号最高的一个旧版（当前正在运行的这个不删，留作回滚）
     try {
-      const dirs = (await readdir(root)).filter((d) => /^fids-player-electron-\d/.test(d) && d !== `fids-player-electron-${v}`)
+      const dirs = (await readdir(root)).filter((d) => /^fids-player-electron-\d/.test(d) && d !== versionDirName && !d.endsWith('.staging'))
       dirs.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-      for (const d of dirs.slice(0, -1)) {
-        const full = join(root, d)
-        // 目录内 chrome-sandbox 为 root 属主，某些环境下普通用户 rm 失败 → sudo -n 兜底（0.7.1 实测 0.6.0 未清）
-        await rm(full, { recursive: true, force: true }).catch(() => execFileAsync('sudo', ['-n', 'rm', '-rf', full]))
-        if (existsSync(full)) await execFileAsync('sudo', ['-n', 'rm', '-rf', full]).catch(() => {})
-      }
+      for (const d of dirs.slice(0, -1)) await removeDir(join(root, d))
     } catch { /* 清理失败不影响更新 */ }
     await rm(work, { recursive: true, force: true }).catch(() => {})
 
     await report(cfg, v, 'restarting', '新进程以 current 路径拉起')
-    // 成功状态由新进程启动后回报（见 reportStartupIfUpdated）；这里只拉起并退出
-    const child = spawn(join(cur, 'fids-player-electron'), process.argv.slice(1), {
-      detached: true, stdio: 'ignore', env: { ...process.env, FIDS_OTA_JUST_UPDATED: v },
+    const child = spawn(join(cur, exeName), process.argv.slice(1), {
+      detached: true, stdio: 'ignore', windowsHide: false,
+      env: { ...process.env, FIDS_OTA_JUST_UPDATED: v },
     })
     child.unref()
     setTimeout(() => app.exit(0), 800)

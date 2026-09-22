@@ -26,6 +26,7 @@ export interface MqttCommand {
   regionFraction?: number
   // update：manifest 地址 / 预期哈希与大小（2026-09-22）
   manifestUrl?: string
+  platform?: string
   sha256?: string
   size?: number
 }
@@ -340,7 +341,7 @@ export class MqttService {
       case 'update':
         // 终端 OTA（2026-09-22）：主进程直接执行下载→验签→安装→切 current→自重启，全程回报 fids
         if (cmd.version && cmd.url && cmd.manifestUrl) {
-          void runUpdate(cfg, { version: cmd.version, url: cmd.url, manifestUrl: cmd.manifestUrl, sha256: cmd.sha256, size: cmd.size })
+          void runUpdate(cfg, { version: cmd.version, url: cmd.url, manifestUrl: cmd.manifestUrl, platform: cmd.platform, sha256: cmd.sha256, size: cmd.size })
         } else {
           console.warn(`[mqtt:${cfg.deviceId}] update 指令缺 version/url/manifestUrl，忽略`)
         }
