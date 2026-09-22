@@ -110,7 +110,9 @@ New-Item -ItemType Directory -Force -Path $Root | Out-Null
 if (Test-Path $verDir) { Remove-Item $verDir -Recurse -Force }
 $staging = "$verDir.staging"; if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
 Expand-Archive -Path $zip -DestinationPath $staging -Force
-if (-not (Test-Path (Join-Path $staging "FIDS Player.exe"))) { throw "包内缺少 FIDS Player.exe" }
+foreach ($must in @("FIDS Player.exe","icudtl.dat","v8_context_snapshot.bin","chrome_100_percent.pak","resources\app.asar")) {
+  if (-not (Test-Path (Join-Path $staging $must))) { throw "包不完整：缺少 $must（构建机 Electron 缓存损坏会产出残缺包，重新构建后上传）" }
+}
 Rename-Item $staging $verDir
 $cur = Join-Path $Root "current"
 if (Test-Path $cur) { cmd /c rmdir "$cur" | Out-Null }

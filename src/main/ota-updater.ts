@@ -163,7 +163,9 @@ export async function runUpdate(cfg: DeviceConfig, cmd: UpdateCommand): Promise<
     rmSync(stagingDir, { recursive: true, force: true })
     mkdirSync(stagingDir, { recursive: true })
     await extract(pkgPath, stagingDir)
-    if (!existsSync(join(stagingDir, exeName))) throw new Error(`包内缺少可执行文件 ${exeName}`)
+    // 完整性：可执行文件 + Electron 运行时必需文件（构建机 Electron 缓存损坏会产出残缺包，hp001 实测 icudtl.dat 缺失启动即退）
+    const must = [exeName, join('resources', 'app.asar'), ...(IS_WIN ? ['icudtl.dat', 'v8_context_snapshot.bin', 'chrome_100_percent.pak'] : ['icudtl.dat', 'v8_context_snapshot.bin', 'chrome-sandbox'])]
+    for (const f of must) if (!existsSync(join(stagingDir, f))) throw new Error(`包不完整：缺少 ${f}`)
     if (!IS_WIN) {
       // chrome-sandbox 需 root:root 4755，否则 Electron 拒绝启动；无免密 sudo 则失败（部署时配置 NOPASSWD）
       try {
