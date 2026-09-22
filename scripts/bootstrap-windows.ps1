@@ -75,7 +75,7 @@ foreach ($u in @("HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall", "H
   if (Test-Path $u) {
     Get-ChildItem $u -ErrorAction SilentlyContinue | ForEach-Object {
       $dn = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).DisplayName
-      if ($dn -and $dn -match "FIDS Player") { try { Remove-Item $_.PSPath -Recurse -Force; Ok "删卸载注册项 $dn" } catch { Warn "删不掉卸载注册项 $dn: $_" } }
+      if ($dn -and $dn -match "FIDS Player") { try { Remove-Item $_.PSPath -Recurse -Force; Ok "删卸载注册项 $dn" } catch { Warn "删不掉卸载注册项 ${dn}: $_" } }
     }
   }
 }
