@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   FIDS Player · Windows 一键引导安装（目录制布局 + 自启 + 可选写入 MQTT 凭据），2026-09-22
 

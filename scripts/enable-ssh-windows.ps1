@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   FIDS 播放端 Windows 机开启 OpenSSH 远程运维（2026-09-22）
 
