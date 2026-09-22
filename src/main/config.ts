@@ -113,7 +113,8 @@ export function loadConfig(): DeviceConfig {
   const path = configPath()
   if (existsSync(path)) {
     try {
-      const content = readFileSync(path, 'utf-8')
+      // 容忍 UTF-8 BOM：Windows 上 PowerShell/记事本写出的 JSON 常带 BOM，JSON.parse 直接抛错会整机回落默认配置（hp001 实测）
+      const content = readFileSync(path, 'utf-8').replace(/^\uFEFF/, '')
       const parsed = JSON.parse(content) as Partial<DeviceConfig>
       // 合并默认值，兼容旧版本配置（缺少 dataChannelUrl 等新字段）
       return { ...defaultConfig(), ...parsed }
