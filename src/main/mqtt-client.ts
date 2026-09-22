@@ -3,6 +3,7 @@ import { app, BrowserWindow } from 'electron'
 import { type DeviceConfig, loadConfig, saveConfigToDisk } from './config'
 import { loadCaSync, fetchAndCacheCa } from './mqtt-ca'
 import * as systemControl from './system-control'
+import { runUpdate } from './ota-updater'
 
 /** MQTT 连接状态 */
 export interface MqttStatus {
@@ -23,6 +24,10 @@ export interface MqttCommand {
   marqueeMode?: 'embedded' | 'overlay'
   regionPosition?: 'bottom' | 'right'
   regionFraction?: number
+  // update：manifest 地址 / 预期哈希与大小（2026-09-22）
+  manifestUrl?: string
+  sha256?: string
+  size?: number
 }
 
 const MAX_DELAY = 60000
@@ -333,8 +338,11 @@ export class MqttService {
         if (cmd.fileList) this.sendToRenderer('sync-files', cmd.fileList)
         break
       case 'update':
-        if (cmd.version && cmd.url) {
-          this.sendToRenderer('update-available', { version: cmd.version, url: cmd.url })
+        // 终端 OTA（2026-09-22）：主进程直接执行下载→验签→安装→切 current→自重启，全程回报 fids
+        if (cmd.version && cmd.url && cmd.manifestUrl) {
+          void runUpdate(cfg, { version: cmd.version, url: cmd.url, manifestUrl: cmd.manifestUrl, sha256: cmd.sha256, size: cmd.size })
+        } else {
+          console.warn(`[mqtt:${cfg.deviceId}] update 指令缺 version/url/manifestUrl，忽略`)
         }
         break
       default:

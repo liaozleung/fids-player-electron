@@ -28,6 +28,7 @@ import {
   resetWatchdog,
 } from './watchdog'
 import { disableScreenSaver } from './system-control'
+import { reportStartupIfUpdated } from './ota-updater'
 
 /**
  * 一屏的运行时元数据。
@@ -299,6 +300,7 @@ app.whenReady().then(async () => {
 
     initMqtt(spannedConfig, getWin)
     startHeartbeat(spannedConfig, getWin)
+    void reportStartupIfUpdated(spannedConfig) // OTA 拉起后回报 success（2026-09-22）
     startWatchdog(spannedConfig, getWin, getDisplayUrl)
     win.webContents.on('ipc-message', (_event, channel) => {
       if (channel === 'display-url-changed') resetWatchdog()
@@ -385,6 +387,7 @@ app.whenReady().then(async () => {
       // 单屏路径：沿用单例 wrapper（兼容 ipc-handlers）
       initMqtt(screenConfig, getWin)
       startHeartbeat(screenConfig, getWin)
+      void reportStartupIfUpdated(screenConfig)
       startWatchdog(screenConfig, getWin, getDisplayUrl)
       win.webContents.on('ipc-message', (_event, channel) => {
         if (channel === 'display-url-changed') resetWatchdog()
