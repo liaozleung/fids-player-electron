@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   管理员 PowerShell 执行一次：
-    1. 安装 Windows 自带 OpenSSH Server（Win10 1809+ / Win11 均内置，离线机需系统盘或 FoD 源）
+    1. 安装 OpenSSH Server：优先系统功能包；断外网机自动改用 fids 服务器上的 Win32-OpenSSH 离线包
     2. sshd 设为自动启动并启动；防火墙放行 22
     3. 默认 shell 设为 PowerShell
     4. 写入运维公钥到管理员组专用的 administrators_authorized_keys（管理员账户的 ~/.ssh/authorized_keys 会被忽略，
@@ -17,9 +17,11 @@
   irm http://192.168.0.200:3000/storage/player/bootstrap/enable-ssh-windows.ps1 -OutFile $env:TEMP\es.ps1; powershell -ExecutionPolicy Bypass -File $env:TEMP\es.ps1
 #>
 param(
+  [string]$Server = "http://192.168.0.200:3000",
   [string]$PublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINRu2iCnaKwXwBuCBTdC2YODWKN0EcQQqxq8XTGw3+Gw fids-ops"
 )
 $ErrorActionPreference = "Stop"
+$Server = $Server.TrimEnd('/')
 function Step($m) { Write-Host ("`n==> " + $m) -ForegroundColor Cyan }
 function Ok($m)   { Write-Host ("    " + $m) -ForegroundColor Green }
 function Warn($m) { Write-Host ("    " + $m) -ForegroundColor Yellow }
@@ -28,8 +30,31 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $isAdmin) { throw "请以管理员身份运行 PowerShell" }
 
 Step "1/4 安装 OpenSSH Server"
-$cap = Get-WindowsCapability -Online | Where-Object Name -like "OpenSSH.Server*"
-if ($cap.State -ne "Installed") { Add-WindowsCapability -Online -Name $cap.Name | Out-Null; Ok "已安装 $($cap.Name)" } else { Ok "已存在" }
+# 优先系统功能包（需能连 Windows Update）；失败（0x800f0922 = 断外网/WSUS 策略）→ 用 fids 服务器上的 Win32-OpenSSH 离线包
+$installed = $false
+try {
+  $cap = Get-WindowsCapability -Online | Where-Object Name -like "OpenSSH.Server*"
+  if ($cap.State -eq "Installed") { $installed = $true; Ok "系统功能包已存在" }
+  else { Add-WindowsCapability -Online -Name $cap.Name -ErrorAction Stop | Out-Null; $installed = $true; Ok "已安装系统功能包 $($cap.Name)" }
+} catch { Warn "系统功能包安装失败（$($_.Exception.Message.Trim())），改用离线包" }
+if (-not $installed) {
+  $dst = "$env:ProgramFiles\OpenSSH"
+  if (Test-Path (Join-Path $dst "sshd.exe")) { Ok "离线包已存在 $dst" }
+  else {
+    $zip = Join-Path $env:TEMP "OpenSSH-Win64.zip"
+    Invoke-WebRequest -Uri "$Server/storage/player/bootstrap/OpenSSH-Win64.zip" -OutFile $zip -TimeoutSec 300
+    $tmpx = Join-Path $env:TEMP "OpenSSH-x"; if (Test-Path $tmpx) { Remove-Item $tmpx -Recurse -Force }
+    Expand-Archive -Path $zip -DestinationPath $tmpx -Force
+    if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
+    Move-Item (Join-Path $tmpx "OpenSSH-Win64") $dst
+    Remove-Item $zip, $tmpx -Recurse -Force -ErrorAction SilentlyContinue
+    Ok "离线包解压到 $dst"
+  }
+  & powershell -ExecutionPolicy Bypass -File (Join-Path $dst "install-sshd.ps1") | Out-Null
+  $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  if ($machinePath -notlike "*$dst*") { [Environment]::SetEnvironmentVariable("Path", "$machinePath;$dst", "Machine") }
+  Ok "sshd 服务已注册（Win32-OpenSSH 9.5）"
+}
 
 Step "2/4 启动 sshd + 防火墙"
 Set-Service -Name sshd -StartupType Automatic
