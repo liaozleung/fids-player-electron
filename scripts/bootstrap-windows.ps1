@@ -122,10 +122,11 @@ $exe = Join-Path $cur "FIDS Player.exe"
 $user = "$env:USERDOMAIN\$env:USERNAME"
 # 原生命令的 stderr 在 ErrorActionPreference=Stop 下会变成终止错误 → 经 cmd /c 吞掉并用退出码判断
 cmd /c "schtasks /delete /tn ""FIDS Player"" /f >nul 2>&1"
-cmd /c "schtasks /create /tn ""FIDS Player"" /tr ""\""$exe\"" --kiosk --disable-infobars"" /sc onlogon /ru ""$user"" /rl highest /f >nul 2>&1"
+# 不带 /ru（带 /ru 需要 /rp 密码，无密码则退出码 1）：默认当前用户 + /it 交互令牌，登录即在桌面会话启动
+cmd /c "schtasks /create /tn ""FIDS Player"" /tr ""\""$exe\"" --kiosk --disable-infobars"" /sc onlogon /rl highest /it /f >nul 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "schtasks /create 失败（退出码 $LASTEXITCODE）" }
 # 启动文件夹里旧的快捷方式已在第 2 步清掉；不再放快捷方式，避免双启
-Ok "schtasks 'FIDS Player' → $exe（onlogon，用户 $user）"
+Ok "schtasks 'FIDS Player' → $exe（onlogon，交互令牌，用户 $user）"
 
 Step "7/8 MQTT 凭据"
 $cfgPath = Join-Path $env:USERPROFILE ".fids_player\config.json"
