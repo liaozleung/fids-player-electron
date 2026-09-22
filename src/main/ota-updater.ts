@@ -90,7 +90,14 @@ async function download(url: string, dest: string, maxBytes: number): Promise<vo
 /** 解压到 staging：tar.gz 有顶层目录 strip 1；zip（Windows 10+ 自带 bsdtar 支持）无顶层目录 */
 async function extract(pkgPath: string, stagingDir: string): Promise<void> {
   if (pkgPath.endsWith('.zip')) {
-    await execFileAsync('tar', ['-xf', pkgPath, '-C', stagingDir])
+    // 精简版 Win10 可能没有 System32\tar.exe（hp001 实测）→ 回落 PowerShell Expand-Archive
+    try {
+      await execFileAsync('tar', ['-xf', pkgPath, '-C', stagingDir])
+    } catch (e) {
+      console.warn('[ota] tar 不可用，改用 Expand-Archive:', (e as Error).message)
+      await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+        `Expand-Archive -LiteralPath '${pkgPath.replace(/'/g, "''")}' -DestinationPath '${stagingDir.replace(/'/g, "''")}' -Force`])
+    }
   } else {
     await execFileAsync('tar', ['-xzf', pkgPath, '-C', stagingDir, '--strip-components=1'])
   }
