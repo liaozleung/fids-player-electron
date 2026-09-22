@@ -135,12 +135,18 @@ $cfgPath = Join-Path $env:USERPROFILE ".fids_player\config.json"
 if ($MqttUser) {
   if (-not (Test-Path $cfgPath)) { Warn "未找到 $cfgPath（设备首次运行会生成）；凭据将在播放器配置页填写"; }
   else {
-    Copy-Item $cfgPath "$cfgPath.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
-    $cfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
-    $cfg.mqttPort = $MqttPort; $cfg.mqttUsername = $MqttUser; $cfg.mqttPassword = $MqttPass
-    # PS 5.1 的 Set-Content -Encoding UTF8 会带 BOM，播放器 JSON.parse 会炸（hp001 实测）→ 无 BOM 写入
-    [IO.File]::WriteAllText($cfgPath, ($cfg | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding $false))
-    Ok "已写入 port=$MqttPort user=$MqttUser（旧配置已备份）"
+    try {
+      Copy-Item $cfgPath "$cfgPath.bak-$(Get-Date -Format yyyyMMdd-HHmmss)"
+      # 显式按 UTF-8 读（默认 Get-Content 按 GBK 读会把播放器写的中文弄坏），去 BOM；写回无 BOM
+      $raw = [IO.File]::ReadAllText($cfgPath, (New-Object System.Text.UTF8Encoding $false)).TrimStart([char]0xFEFF)
+      $cfg = $raw | ConvertFrom-Json
+      $cfg.mqttPort = $MqttPort; $cfg.mqttUsername = $MqttUser; $cfg.mqttPassword = $MqttPass
+      [IO.File]::WriteAllText($cfgPath, ($cfg | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding $false))
+      Ok "已写入 port=$MqttPort user=$MqttUser（旧配置已备份）"
+    } catch {
+      # 凭据写失败不能拖垮引导（播放器仍要拉起）：提示到配置页手填
+      Warn "config.json 解析/写入失败（$($_.Exception.Message)），未改动凭据；请启动后按 Esc 进配置页填 8883 + 账密"
+    }
   }
 } else { Warn "未提供 -MqttUser：启动后按 Esc 进配置页填 8883 + 账密" }
 
