@@ -83,4 +83,5 @@ Ok "$authFile 已写入公钥并收紧 ACL"
 
 $ip = ([System.Net.Dns]::GetHostAddresses($env:COMPUTERNAME) | Where-Object { $_.AddressFamily -eq "InterNetwork" -and $_.ToString() -notlike "127.*" -and $_.ToString() -notlike "169.254*" } | Select-Object -First 1).IPAddressToString
 if (-not $ip) { $ip = "<本机IP>" }
-Write-Host "`n完成。运维侧：ssh $env:USERNAME@$ip" -ForegroundColor Green
+$acct = (whoami).Trim()
+Write-Host "`n完成。运维侧：ssh $env:USERNAME@$ip   （完整账户 $acct；企业版内置 Administrator 常被禁用，以此处用户名为准）" -ForegroundColor Green

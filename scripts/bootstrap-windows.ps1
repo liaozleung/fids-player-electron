@@ -29,6 +29,8 @@ param(
   [string]$MqttUser = "",
   [string]$MqttPass = "",
   [int]$MqttPort = 8883,
+  # 含中文的 deviceId/用户名（如 dev-竖屏1）走命令行会被 GBK 弄坏 → 用 UTF-8 JSON 文件传：{"mqttUsername":"…","mqttPassword":"…","mqttPort":8883}
+  [string]$CredFile = "",
   [switch]$NoStart
 )
 $ErrorActionPreference = "Stop"
@@ -132,6 +134,11 @@ Ok "schtasks 'FIDS Player' → $exe（onlogon，交互令牌，用户 $user）"
 
 Step "7/8 MQTT 凭据"
 $cfgPath = Join-Path $env:USERPROFILE ".fids_player\config.json"
+if ($CredFile -and (Test-Path $CredFile)) {
+  $cf = ([IO.File]::ReadAllText($CredFile, (New-Object System.Text.UTF8Encoding $false))).TrimStart([char]0xFEFF) | ConvertFrom-Json
+  $MqttUser = $cf.mqttUsername; $MqttPass = $cf.mqttPassword; if ($cf.mqttPort) { $MqttPort = [int]$cf.mqttPort }
+  Remove-Item $CredFile -Force -ErrorAction SilentlyContinue
+}
 if ($MqttUser) {
   if (-not (Test-Path $cfgPath)) { Warn "未找到 $cfgPath（设备首次运行会生成）；凭据将在播放器配置页填写"; }
   else {
@@ -159,3 +166,7 @@ if (-not $NoStart) {
   Ok "已经由计划任务启动 $Version；日志 $env:USERPROFILE\.fids_player\logs\player.log"
 }
 Write-Host "`n完成。以后升级由管理端 OTA 下发，无需再到现场。" -ForegroundColor Green
+if ((query session 2>$null) -match "rdp-tcp.*Active") {
+  Write-Host "提示：你在远程桌面里。播放器此刻显示在 RDP 会话中，物理屏幕是锁屏；退出前执行下面这条把会话送回物理屏幕（RDP 会断开，屏幕即恢复）：" -ForegroundColor Yellow
+  Write-Host "  tscon (Get-Process -Id `$PID).SessionId /dest:console" -ForegroundColor Yellow
+}
