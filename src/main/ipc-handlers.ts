@@ -10,6 +10,7 @@ import { executeSystemCommand } from './system-control'
 import { syncFiles, type FileEntry } from './file-sync'
 import { getDisplayUrl, updateMqttConfig } from './mqtt-client'
 import { updateHeartbeatConfig } from './heartbeat'
+import { localPlatformKey } from './ota-updater'
 
 /** 当前运行时配置 (内存中) */
 let runtimeConfig: DeviceConfig
@@ -92,6 +93,8 @@ export function initIpcHandlers(initialConfig: DeviceConfig): void {
       deviceType: 'fids_player',
       // 打包后 npm_package_version 为空一直上报 0.1.0（2026-09-21 修）：改用 app.getVersion()（读 package.json version）
       softwareVersion: `electron-v${app.getVersion()}`,
+      // 平台自报（2026-09-22）：fids 终端版本管理按此过滤下发目标
+      platform: localPlatformKey(),
       status: 'online',
     }
 

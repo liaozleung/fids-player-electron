@@ -43,7 +43,10 @@ const IS_WIN = process.platform === 'win32'
 
 /** 本机对应的发布包平台标识（与 fids RELEASE_PLATFORMS 一致） */
 export function localPlatformKey(): string {
-  return `electron-${IS_WIN ? 'win' : 'linux'}-x64`
+  // 与 fids player_releases.platform / devices.platform 同一套字符串：electron-<os>-<arch>
+  const os = IS_WIN ? 'win' : process.platform === 'darwin' ? 'darwin' : 'linux'
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+  return `electron-${os}-${arch}`
 }
 
 /** 当前可执行文件所在的版本目录（fids-player-electron-<v>）与安装根 */
@@ -77,7 +80,7 @@ async function report(cfg: DeviceConfig, version: string, status: Status, messag
     await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId: cfg.deviceId, version, status, message }),
+      body: JSON.stringify({ deviceId: cfg.deviceId, version, status, message, platform: localPlatformKey() }),
       signal: AbortSignal.timeout(8000),
     })
   } catch (e) {
