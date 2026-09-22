@@ -98,7 +98,15 @@ async function download(url: string, dest: string, maxBytes: number): Promise<vo
 /** 解压到 staging：tar.gz 有顶层目录 strip 1（Linux）；zip 用进程内 extract-zip（不依赖 tar.exe / PowerShell，hp001 实测两者都不可靠） */
 async function extract(pkgPath: string, stagingDir: string): Promise<void> {
   if (pkgPath.endsWith('.zip')) {
-    await withTimeout(extractZip(pkgPath, { dir: stagingDir }), 10 * 60_000, 'zip 解压')
+    // Electron 给 fs 打了 asar 补丁：写 resources/app.asar 会被当成"归档目录"→ "Invalid package …app.asar"（hp001 实测）。
+    // 解压期间关掉 asar 支持，让 app.asar 只是一个普通文件。
+    const prev = process.noAsar
+    process.noAsar = true
+    try {
+      await withTimeout(extractZip(pkgPath, { dir: stagingDir }), 10 * 60_000, 'zip 解压')
+    } finally {
+      process.noAsar = prev
+    }
   } else {
     await withTimeout(execFileAsync('tar', ['-xzf', pkgPath, '-C', stagingDir, '--strip-components=1']), 10 * 60_000, 'tar 解压')
   }
@@ -196,7 +204,9 @@ export async function runUpdate(cfg: DeviceConfig, cmd: UpdateCommand): Promise<
     const cur = await switchCurrent(root, versionDirName)
     // 清理：只留 current 指向的新版 + 版本号最高的一个旧版（当前正在运行的这个不删，留作回滚）
     try {
-      const dirs = (await readdir(root)).filter((d) => /^fids-player-electron-\d/.test(d) && d !== versionDirName && !d.endsWith('.staging'))
+      const entries = await readdir(root)
+      for (const d of entries) if (d.endsWith('.staging')) await rmDirRetry(join(root, d))
+      const dirs = entries.filter((d) => /^fids-player-electron-\d/.test(d) && d !== versionDirName && !d.endsWith('.staging'))
       dirs.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
       for (const d of dirs.slice(0, -1)) await removeDir(join(root, d))
     } catch { /* 清理失败不影响更新 */ }
