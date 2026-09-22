@@ -94,7 +94,8 @@ if (-not $Version) {
 $verDir = Join-Path $Root "fids-player-electron-$Version"
 $tmp = Join-Path $env:TEMP "fids-ota-bootstrap"; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 $rel = Invoke-RestMethod -Uri "$Server/storage/player/releases/latest-electron-win-x64.json" -TimeoutSec 30
-if ($rel.version -ne $Version) { $relUrl = "$Server/storage/player/releases/$Version/FIDS-Player-$Version-win.zip" } else { $relUrl = $rel.url }
+# 存储键把文件名里的空格转成下划线（fids releaseStorageKeys）：FIDS Player-x.y.z-win.zip → FIDS_Player-x.y.z-win.zip
+if ($rel.version -ne $Version) { $relUrl = "$Server/storage/player/releases/$Version/FIDS_Player-$Version-win.zip" } else { $relUrl = $rel.url }
 $manUrl = "$relUrl.manifest.json"
 $zip = Join-Path $tmp "pkg.zip"; $man = Join-Path $tmp "pkg.manifest.json"
 Invoke-WebRequest -Uri $manUrl -OutFile $man -TimeoutSec 60
