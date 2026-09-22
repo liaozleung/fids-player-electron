@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { spawn } from 'node:child_process'
-import { createWriteStream, existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { readdir, rename, rm, rmdir, symlink, unlink } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
@@ -47,7 +47,10 @@ export function localPlatformKey(): string {
 
 /** 当前可执行文件所在的版本目录（fids-player-electron-<v>）与安装根 */
 export function installLayout(): { root: string; versionDir: string; exeName: string; ok: boolean } {
-  const exe = process.execPath
+  // Windows 经 current 目录联接启动时 process.execPath 仍是 C:\fids-player\current\FIDS Player.exe（不解析联接），
+  // Linux 则由 /proc/self/exe 自动解析软链；统一 realpath 得到真实版本目录（hp001 实测误判"非目录制"）
+  let exe = process.execPath
+  try { exe = realpathSync.native ? realpathSync.native(exe) : realpathSync(exe) } catch { /* 保持原值 */ }
   const versionDir = dirname(exe)
   const root = resolve(versionDir, '..')
   const ok = app.isPackaged && /^fids-player-electron-\d/.test(basename(versionDir))
