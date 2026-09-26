@@ -94,7 +94,9 @@ export function defaultConfig(): DeviceConfig {
     macAddress: getMacAddress(),
     serverUrl: 'http://192.168.0.200:3000',
     dataChannelUrl: 'http://192.168.0.200:9203',
-    mqttBroker: '192.168.0.200',
+    // 2026-09-26：默认连 broker VIP .217（三节点 RabbitMQ 集群浮动入口，node1 挂自动漂移）；
+    // serverUrl 仍 .200（fids 网关）。老设备以磁盘值为准不受影响，需切换用 ops/rabbitmq-cluster/vip/device-repoint-mqtt-vip.sh
+    mqttBroker: '192.168.0.217',
     // secure-by-default（2026-09-10）：新装默认 8883=TLS（CA 自取，注册后自动落一机一凭据）；
     // 磁盘上已有配置的老设备不受影响（loadConfig 以磁盘值为准），改回 1883 即回退明文
     mqttPort: 8883,
